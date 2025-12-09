@@ -1,41 +1,46 @@
-import React from 'react';
-import {
-  SafeAreaView,
-  Text,
-  View,
-  StyleSheet,
-} from 'react-native';
+import React, { useState } from 'react';
+import { StyleSheet, View, StatusBar } from 'react-native';
+import SplashScreen from './src/SplashScreen';
+import { PencilKitView } from './PencilKitView';
 
 function App(): React.JSX.Element {
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.contentContainer}>
-        <Text style={styles.title}>Welcome to Craftoon!</Text>
-        <Text style={styles.subtitle}>윈도우에서 수정하고 맥에서 봅니다</Text>
+  const [currentScreen, setCurrentScreen] = useState<'splash' | 'editor'>('splash');
+
+  const handleNewStory = () => {
+    console.log('New Story clicked!');
+    setCurrentScreen('editor');
+  };
+
+  const handleLoadStory = () => {
+    console.log('Load Story clicked!');
+    // TODO: Implement load story logic
+  };
+
+  if (currentScreen === 'editor') {
+    return (
+      <View style={styles.container}>
+        <StatusBar hidden />
+        <PencilKitView style={styles.pencilKit} />
       </View>
-    </SafeAreaView>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <StatusBar hidden />
+      <SplashScreen onNewStory={handleNewStory} onLoadStory={handleLoadStory} />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF', // 하얀색 배경
+    backgroundColor: '#000000',
   },
-  contentContainer: {
+  pencilKit: {
     flex: 1,
-    justifyContent: 'center', // 세로 중앙 정렬
-    alignItems: 'center',     // 가로 중앙 정렬
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#000000',
-    marginBottom: 10,
-  },
-  subtitle: {
-    fontSize: 18,
-    color: '#007AFF', // 파란색 글씨
+    backgroundColor: 'white', // 캔버스 배경색
   },
 });
 
