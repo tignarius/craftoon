@@ -10,6 +10,12 @@ import {
     SafeAreaView,
 } from 'react-native';
 
+import CraftoonTitle from './assets/craftoon_title.svg';
+import CraftoonSubtitle from './assets/craftoon_subtitle.svg';
+import SplashIcon from './assets/splash_icon_final.png'; // No SVG found for icon, keeping PNG for now or need to find splash_comic3.svg
+import SplashComic from './assets/splash_comic3.svg';
+
+
 const { width, height } = Dimensions.get('window');
 
 interface SplashScreenProps {
@@ -29,28 +35,28 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
 
                     {/* 1. Title: Craftoon */}
                     <View style={styles.titleContainer}>
-                        <Image
-                            source={require('./assets/craftoon_title.png')}
-                            style={styles.titleImage}
-                            resizeMode="contain"
+                        <CraftoonTitle
+                            width="100%"
+                            height="100%"
+                            preserveAspectRatio="xMidYMid meet"
                         />
                     </View>
 
                     {/* 2. Subtitle: Create Your Story */}
                     <View style={styles.subtitleContainer}>
-                        <Image
-                            source={require('./assets/craftoon_subtitle.png')}
-                            style={styles.subtitleImage}
-                            resizeMode="contain"
+                        <CraftoonSubtitle
+                            width="100%"
+                            height="100%"
+                            preserveAspectRatio="xMidYMid meet"
                         />
                     </View>
 
                     {/* 3. Icon: Comic */}
                     <View style={styles.iconContainer}>
-                        <Image
-                            source={require('./assets/splash_icon_final.png')}
-                            style={styles.iconImage}
-                            resizeMode="contain"
+                        <SplashComic
+                            width="100%"
+                            height="100%"
+                            preserveAspectRatio="xMidYMid meet"
                         />
                     </View>
 
