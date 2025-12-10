@@ -2,21 +2,15 @@ import React from 'react';
 import {
     View,
     Text,
-    Image,
     ImageBackground,
     StyleSheet,
     TouchableOpacity,
-    Dimensions,
+    useWindowDimensions, // Changed from Dimensions
     SafeAreaView,
 } from 'react-native';
-
 import CraftoonTitle from './assets/craftoon_title.svg';
 import CraftoonSubtitle from './assets/craftoon_subtitle.svg';
-import SplashIcon from './assets/splash_icon_final.png'; // No SVG found for icon, keeping PNG for now or need to find splash_comic3.svg
 import SplashComic from './assets/splash_comic3.svg';
-
-
-const { width, height } = Dimensions.get('window');
 
 interface SplashScreenProps {
     onNewStory: () => void;
@@ -24,17 +18,20 @@ interface SplashScreenProps {
 }
 
 const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) => {
+    const { width, height } = useWindowDimensions(); // Use hook for responsiveness
+    const isLandscape = width > height;
+
     return (
         <ImageBackground
-            source={require('./assets/bg.jpeg')}
-            style={styles.backgroundImage}
+            source={require('./assets/bg.png')}
+            style={[styles.backgroundImage, { width, height }]}
             resizeMode="cover"
         >
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.container}>
 
                     {/* 1. Title: Craftoon */}
-                    <View style={styles.titleContainer}>
+                    <View style={[styles.titleContainer, { flex: isLandscape ? 2 : 1.5 }]}>
                         <CraftoonTitle
                             width="100%"
                             height="100%"
@@ -43,7 +40,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
                     </View>
 
                     {/* 2. Subtitle: Create Your Story */}
-                    <View style={styles.subtitleContainer}>
+                    <View style={[styles.subtitleContainer, { flex: 0.5 }]}>
                         <CraftoonSubtitle
                             width="100%"
                             height="100%"
@@ -52,7 +49,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
                     </View>
 
                     {/* 3. Icon: Comic */}
-                    <View style={styles.iconContainer}>
+                    <View style={[styles.iconContainer, { flex: isLandscape ? 3 : 2 }]}>
                         <SplashComic
                             width="100%"
                             height="100%"
@@ -61,7 +58,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
                     </View>
 
                     {/* 4. Action Buttons */}
-                    <View style={styles.buttonContainer}>
+                    <View style={[styles.buttonContainer, { flex: 1 }]}>
                         <TouchableOpacity onPress={onNewStory} style={styles.buttonNewStory}>
                             <Text style={styles.buttonText}>New Story</Text>
                         </TouchableOpacity>
@@ -80,8 +77,6 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
 const styles = StyleSheet.create({
     backgroundImage: {
         flex: 1,
-        width: width,
-        height: height,
     },
     safeArea: {
         flex: 1,
@@ -93,39 +88,27 @@ const styles = StyleSheet.create({
         padding: 20,
     },
     titleContainer: {
-        marginBottom: 20,
-        width: '80%',
-        alignItems: 'center',
-    },
-    titleImage: {
-        width: '100%',
-        height: 100, // Adjust based on aspect ratio
-    },
-    subtitleContainer: {
-        marginBottom: 20,
-        width: '60%',
-        alignItems: 'center',
-    },
-    subtitleImage: {
-        width: '100%',
-        height: 60, // Adjust based on aspect ratio
-    },
-    iconContainer: {
-        marginBottom: 40,
-        width: 280,
-        height: 280,
+        width: '90%',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    iconImage: {
-        width: '100%',
-        height: '100%',
+    subtitleContainer: {
+        width: '70%',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    iconContainer: {
+        width: '80%', // Increased width usage
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 20,
     },
     buttonContainer: {
         flexDirection: 'row',
-        gap: 20, // Note: gap might require newer RN versions or polyfill in layout, using margin is safer if unsure, but RN 0.72+ supports gap.
+        gap: 20,
         justifyContent: 'center',
         width: '100%',
+        alignItems: 'center',
     },
     buttonNewStory: {
         width: 200,
@@ -137,12 +120,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         marginHorizontal: 10,
-        // Shadow for iOS
         shadowColor: '#1f2687',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.37,
         shadowRadius: 32,
-        // Elevation for Android
         elevation: 5,
     },
     buttonLoadStory: {
@@ -165,7 +146,6 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 24,
         fontWeight: 'bold',
-        // fontFamily: 'Gamja Flower', // Font needs to be linked if used
     },
 });
 
