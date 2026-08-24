@@ -12,6 +12,9 @@
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		7EF359EAF347E6E90314B309 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		A10000022CA45674006654EE /* RNPencilKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000012CA45674006654EE /* RNPencilKitManager.swift */; };
+		A10000042CA45674006654EE /* RNPencilKitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000032CA45674006654EE /* RNPencilKitView.swift */; };
+		A10000062CA45674006654EE /* RNPencilKitManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000052CA45674006654EE /* RNPencilKitManager.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +27,9 @@
 		5DCACB8F33CDC322A6C60F78 /* libPods-Craftoon.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Craftoon.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Craftoon/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Craftoon/LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A10000012CA45674006654EE /* RNPencilKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RNPencilKitManager.swift; path = Craftoon/RNPencilKitManager.swift; sourceTree = "<group>"; };
+		A10000032CA45674006654EE /* RNPencilKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RNPencilKitView.swift; path = Craftoon/RNPencilKitView.swift; sourceTree = "<group>"; };
+		A10000052CA45674006654EE /* RNPencilKitManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = RNPencilKitManager.m; path = Craftoon/RNPencilKitManager.m; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -44,6 +50,9 @@
 			children = (
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
+				A10000012CA45674006654EE /* RNPencilKitManager.swift */,
+				A10000032CA45674006654EE /* RNPencilKitView.swift */,
+				A10000052CA45674006654EE /* RNPencilKitManager.m */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
@@ -247,6 +256,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
+				A10000022CA45674006654EE /* RNPencilKitManager.swift in Sources */,
+				A10000042CA45674006654EE /* RNPencilKitView.swift in Sources */,
+				A10000062CA45674006654EE /* RNPencilKitManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -277,6 +289,7 @@
 				PRODUCT_NAME = Craftoon;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
@@ -303,6 +316,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
 				PRODUCT_NAME = Craftoon;
 				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
@@ -379,6 +393,7 @@
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				TARGETED_DEVICE_FAMILY = "1,2";
 				USE_HERMES = true;
 			};
 			name = Debug;
@@ -446,6 +461,7 @@
 				);
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
 				USE_HERMES = true;
 				VALIDATE_PRODUCT = YES;
 			};
