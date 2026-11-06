@@ -4,8 +4,8 @@ import {
   StyleSheet,
   TouchableOpacity,
   PanResponder,
-  Text,
 } from 'react-native';
+import { AppText as Text } from './AppText';
 import { ComicPanel } from '../types/comic';
 import { Trash2, Move, PenTool } from 'lucide-react-native';
 

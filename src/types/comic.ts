@@ -1,4 +1,4 @@
-export type ToolType = 'panel' | 'pen' | 'bubble' | 'brush' | 'eraser';
+export type ToolType = 'panel' | 'pen' | 'bubble' | 'brush' | 'eraser' | 'select' | 'draw' | 'sticker';
 
 export type PanelMode = 'layout' | 'draw' | 'edit';
 
@@ -11,6 +11,7 @@ export interface ComicPanel {
   borderWidth?: number;
   borderColor?: string;
   borderRadius?: number;
+  drawingData?: string; // 드로잉 base64 데이터 (페이지 전환 및 저장 시 유지)
 }
 
 export interface ComicBubble {
@@ -27,8 +28,24 @@ export interface ComicBubble {
   backgroundColor?: string;
 }
 
+export interface ComicSticker {
+  id: string;
+  x: number;
+  y: number;
+  width?: number;
+  height?: number;
+  uri?: string;
+  text?: string;
+  color?: string;
+  bgColor?: string;
+  fontSize?: number;
+  rotation?: number;
+}
+
 export interface ComicPage {
+  canvasSize?: { width: number; height: number };
   id: string;
   panels: ComicPanel[];
   bubbles: ComicBubble[];
+  stickers?: ComicSticker[];
 }

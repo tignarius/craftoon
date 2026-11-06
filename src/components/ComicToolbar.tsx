@@ -1,10 +1,10 @@
 import React from 'react';
 import {
   View,
-  Text,
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import { AppText as Text } from './AppText';
 import {
   MousePointer2,
   Square,

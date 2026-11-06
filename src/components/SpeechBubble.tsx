@@ -1,11 +1,11 @@
 import React, { useRef } from 'react';
 import {
   View,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   PanResponder,
 } from 'react-native';
+import { AppTextInput as TextInput } from './AppText';
 import { ComicBubble } from '../types/comic';
 import { Trash2 } from 'lucide-react-native';
 

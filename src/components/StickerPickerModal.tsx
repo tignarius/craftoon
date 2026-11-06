@@ -2,11 +2,11 @@ import React from 'react';
 import {
   Modal,
   View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
 } from 'react-native';
+import { AppText as Text } from './AppText';
 import { Sparkles, X } from 'lucide-react-native';
 import { ComicSticker } from '../types/comic';
 

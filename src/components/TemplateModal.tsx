@@ -2,12 +2,12 @@ import React from 'react';
 import {
   Modal,
   View,
-  Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
   Dimensions,
 } from 'react-native';
+import { AppText as Text } from './AppText';
 import { ComicPanel } from '../types/comic';
 import { LayoutGrid, X } from 'lucide-react-native';
 

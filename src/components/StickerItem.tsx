@@ -1,11 +1,11 @@
 import React, { useRef } from 'react';
 import {
   View,
-  Text,
   StyleSheet,
   TouchableOpacity,
   PanResponder,
 } from 'react-native';
+import { AppText as Text } from './AppText';
 import { ComicSticker } from '../types/comic';
 import { Trash2, Move } from 'lucide-react-native';
 
