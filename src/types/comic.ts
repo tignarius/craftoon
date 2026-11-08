@@ -43,6 +43,7 @@ export interface ComicSticker {
 }
 
 export interface ComicPage {
+  orientation?: 'portrait' | 'landscape';
   canvasSize?: { width: number; height: number };
   id: string;
   panels: ComicPanel[];

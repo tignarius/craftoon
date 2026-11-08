@@ -1,0 +1,39 @@
+{
+  "identifier": "CF0D2FAA-7C7B-4781-A4E6-4D8F633FF807",
+  "nonRenewingSubscriptions": [],
+  "products": [
+    {
+      "displayPrice": "4.99",
+      "familyShareable": false,
+      "internalID": "1147218134",
+      "localizations": [
+        {
+          "description": "More pages, Library saving, PDF export, email and printing. One-time purchase.",
+          "displayName": "Craftoon Pro",
+          "locale": "en_CA"
+        },
+        {
+          "description": "페이지 제한 해제, 라이브러리 저장, PDF·이메일·인쇄. 일회성 구매.",
+          "displayName": "Craftoon Pro",
+          "locale": "ko"
+        }
+      ],
+      "productID": "com.craftoon.pro.unlock",
+      "referenceName": "Craftoon Pro",
+      "type": "NonConsumable"
+    }
+  ],
+  "settings": {
+    "_applicationInternalID": "",
+    "_developerTeamID": "",
+    "_failTransactionsEnabled": false,
+    "_locale": "en_CA",
+    "_storefront": "CAN",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}

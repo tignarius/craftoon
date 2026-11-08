@@ -1,12 +1,15 @@
 import React from 'react';
 import Svg, {
-  Circle, Defs, Ellipse, G, LinearGradient, Path, Rect, Stop,
+  Circle, Defs, Filter, FeDropShadow, G, LinearGradient, Path, Rect, Stop,
 } from 'react-native-svg';
 
 export function CanvasMenuIcon({ size }: { size: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 128 128">
+    <Svg width={size} height={size} viewBox="-8 -8 144 144">
       <Defs>
+        <Filter id="canvasShapeShadow" x="-25%" y="-25%" width="160%" height="170%">
+          <FeDropShadow dx="1" dy="6" stdDeviation="3" floodColor="#23164F" floodOpacity="0.38" />
+        </Filter>
         <LinearGradient id="canvasPaper" x1="0" y1="0" x2="1" y2="1">
           <Stop offset="0" stopColor="#FFFFFF" />
           <Stop offset="1" stopColor="#FFF2D8" />
@@ -17,7 +20,7 @@ export function CanvasMenuIcon({ size }: { size: number }) {
           <Stop offset="1" stopColor="#E99430" />
         </LinearGradient>
       </Defs>
-      <Ellipse cx="65" cy="120" rx="44" ry="5" fill="#23164F" opacity="0.18" />
+      <G filter="url(#canvasShapeShadow)">
       <G transform="rotate(-7 64 64)">
         <Rect x="27" y="20" width="79" height="94" rx="3" fill="#25164F" opacity="0.18" />
         <Rect x="23" y="17" width="79" height="94" rx="3" fill="#E8DAC6" stroke="#D9C9B3" />
@@ -52,14 +55,18 @@ export function CanvasMenuIcon({ size }: { size: number }) {
         <Path d="M-7 72L0 89L7 72Z" fill="#EFCB93" stroke="#C79C67" strokeWidth="0.8" />
         <Path d="M-2.5 83L0 89L2.5 83Z" fill="#465268" />
       </G>
+      </G>
     </Svg>
   );
 }
 
 export function LibraryMenuIcon({ size }: { size: number }) {
   return (
-    <Svg width={size} height={size} viewBox="0 0 128 128">
-      <Ellipse cx="65" cy="121" rx="46" ry="4" fill="#23164F" opacity="0.16" />
+    <Svg width={size} height={size} viewBox="-8 -8 144 144">
+      <Defs><Filter id="libraryShapeShadow" x="-25%" y="-25%" width="160%" height="170%">
+        <FeDropShadow dx="1" dy="6" stdDeviation="3" floodColor="#23164F" floodOpacity="0.38" />
+      </Filter></Defs>
+      <G filter="url(#libraryShapeShadow)">
       {/* A raised lid and the dark opening make this a manuscript archive box. */}
       <Path d="M37 19L106 29L115 63L44 53Z" fill="#F3D2A0" stroke="#B88755" strokeWidth="1.5" strokeLinejoin="round" />
       <Path d="M44 27L101 35L107 55L49 47Z" fill="#E7BE87" />
@@ -86,6 +93,7 @@ export function LibraryMenuIcon({ size }: { size: number }) {
       <Path d="M19 77L84 86" stroke="#FFE3B9" strokeWidth="2" strokeLinecap="round" />
       <Path d="M39 88L65 92V103L39 99Z" fill="#FFF3D9" stroke="#B88755" strokeWidth="1" strokeLinejoin="round" />
       <Path d="M45 94L59 96" stroke="#AE8057" strokeWidth="2" strokeLinecap="round" />
+      </G>
     </Svg>
   );
 }

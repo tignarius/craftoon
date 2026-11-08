@@ -10,10 +10,13 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { usePro } from './access/ProProvider';
+import { compareStoryCreation } from './utils/storyOrder';
+import { coverAspectRatio } from './utils/canvasFormat';
 import { ScreenHeader } from './components/ScreenHeader';
 import { iconColors, screenChrome } from './components/screenChrome';
 import { AppText as Text } from './components/AppText';
-import { BookOpen, Glasses, Pencil, SquarePen, LibraryBig, Trash2 } from 'lucide-react-native';
+import { BookOpen, Glasses, SquarePen, Trash2 } from 'lucide-react-native';
 import { storyLibrary, StorySummary } from './services/storyLibrary';
 
 interface LibraryScreenProps {
@@ -24,6 +27,7 @@ interface LibraryScreenProps {
 
 export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScreenProps) {
   const { width } = useWindowDimensions();
+  const { requirePro } = usePro();
   const columns = Math.min(4, Math.max(2, Math.floor(width / 240)));
   const cardWidth = (width - 32 - 16 * (columns - 1)) / columns;
   const [stories, setStories] = useState<StorySummary[]>([]);
@@ -31,18 +35,20 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
   const [error, setError] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+  const [emailing, setEmailing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deleted, setDeleted] = useState<{ token: string; story: StorySummary } | null>(null);
   const busyRef = useRef(false);
+  const lastCardPressRef = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
     let mounted = true;
     setLoading(true);
     setError(false);
     storyLibrary.listStories().then(items => {
-      if (mounted) { setStories(items); }
+      if (mounted) { setStories([...items].sort(compareStoryCreation)); }
     }).catch(() => {
       if (mounted) { setError(true); }
     }).finally(() => {
@@ -54,18 +60,27 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
   const open = async (id: string, mode: 'reader' | 'editor' = 'reader') => {
     if (busyRef.current) { return; }
     busyRef.current = true;
+    lastCardPressRef.current = null;
     setOpeningId(id);
     try { await onOpen(id, mode); } finally { setOpeningId(null); busyRef.current = false; }
   };
 
   const select = (id: string) => {
     if (busyRef.current) { return; }
+    const time = Date.now();
+    const previous = lastCardPressRef.current;
+    if (previous?.id === id && time >= previous.time && time - previous.time <= 350) {
+      lastCardPressRef.current = null;
+      return open(id, 'editor');
+    }
+    lastCardPressRef.current = { id, time };
     setSelectedId(current => current === id ? null : id);
   };
 
   const remove = async (story: StorySummary) => {
     if (busyRef.current) { return; }
     busyRef.current = true;
+    lastCardPressRef.current = null;
     setDeletingId(story.id);
     try {
       const receipt = await storyLibrary.deleteStory(story.id);
@@ -84,7 +99,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
     try {
       const restored = await storyLibrary.restoreStory(deleted.token);
       setStories(items => [...items.filter(item => item.id !== restored.id), restored]
-        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+        .sort(compareStoryCreation));
       setSelectedId(restored.id);
       setDeleted(null);
     } catch {
@@ -94,7 +109,9 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
 
   const printSelected = async () => {
     if (!selectedId || busyRef.current) { return; }
+    if (!requirePro('export', 'library')) { return; }
     busyRef.current = true;
+    lastCardPressRef.current = null;
     setPrinting(true);
     try {
       const story = await storyLibrary.loadStory(selectedId);
@@ -104,17 +121,34 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
     } finally { setPrinting(false); busyRef.current = false; }
   };
 
+  const emailSelected = async () => {
+    if (busyRef.current) { return; }
+    if (!selectedId) {
+      Alert.alert('Select a comic', 'Choose a comic in your library to email.');
+      return;
+    }
+    if (!requirePro('export', 'library')) { return; }
+    busyRef.current = true;
+    lastCardPressRef.current = null;
+    setEmailing(true);
+    try {
+      const story = await storyLibrary.loadStory(selectedId);
+      await storyLibrary.emailStory(story);
+    } catch {
+      Alert.alert('Could not prepare email', 'Your comic is still in Library. Please try again.');
+    } finally { setEmailing(false); busyRef.current = false; }
+  };
+
   return (
     <View style={styles.root}>
       <StatusBar hidden />
-      <ScreenHeader onPrint={printSelected} printLabel="Print selected comic"
-        printDisabled={!selectedId || openingId !== null || deletingId !== null} printing={printing}>
-        <View style={screenChrome.action}>
-          <LibraryBig size={22} color={iconColors.library} />
-        </View>
+      <ScreenHeader mode="library" onPrint={printSelected} printLabel="Print selected comic"
+        printDisabled={!selectedId || openingId !== null || deletingId !== null || emailing} printing={printing}
+        onEmail={emailSelected} emailing={emailing}
+        emailDisabled={openingId !== null || deletingId !== null || printing || emailing}>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open Canvas"
           accessibilityHint={selectedId ? 'Edit the selected comic' : 'Return to your current canvas'}
-          disabled={openingId !== null || deletingId !== null || printing}
+          disabled={openingId !== null || deletingId !== null || printing || emailing}
           style={screenChrome.action} onPress={() => selectedId ? open(selectedId, 'editor') : onHome()} activeOpacity={0.7}>
           <SquarePen size={22} color={iconColors.canvas} />
         </TouchableOpacity>
@@ -132,7 +166,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
           numColumns={columns}
           columnWrapperStyle={styles.galleryRow}
           data={stories}
-          extraData={{ selectedId, openingId, deletingId, printing }}
+          extraData={{ selectedId, openingId, deletingId, printing, emailing }}
           keyExtractor={story => story.id}
           contentContainerStyle={stories.length ? styles.gallery : styles.emptyList}
           ListEmptyComponent={
@@ -145,11 +179,11 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
           renderItem={({ item }) => (
             <TouchableOpacity
               accessibilityLabel={item.title}
-              accessibilityHint="Tap to show actions. Tap the selected comic again to deselect."
-              accessibilityState={{ selected: selectedId === item.id, disabled: openingId !== null || deletingId !== null || printing }}
+              accessibilityHint="Tap to show actions. Double-tap to open in Canvas. Tap again after a pause to deselect."
+              accessibilityState={{ selected: selectedId === item.id, disabled: openingId !== null || deletingId !== null || printing || emailing }}
               accessibilityActions={[
-                { name: 'open', label: 'Read comic' },
                 { name: 'edit', label: 'Edit comic' },
+                { name: 'open', label: 'Read comic' },
                 ...(selectedId === item.id ? [{ name: 'delete', label: 'Delete comic' }] : []),
               ]}
               onAccessibilityAction={event => {
@@ -158,10 +192,10 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
                 if (event.nativeEvent.actionName === 'delete') { remove(item); }
               }}
               style={[styles.card, { width: cardWidth }, selectedId === item.id && styles.cardSelected]}
-              disabled={openingId !== null || deletingId !== null || printing}
+              disabled={openingId !== null || deletingId !== null || printing || emailing}
               onPress={() => select(item.id)}
             >
-              <View style={styles.thumbnailFrame}>
+              <View testID={`comic-cover-${item.id}`} style={[styles.thumbnailFrame, { aspectRatio: coverAspectRatio(item) }]}>
                 {item.thumbnailData ? (
                   <Image source={{ uri: item.thumbnailData }} style={styles.thumbnail}
                     resizeMode="contain" accessibilityLabel={`${item.title} preview`} />
@@ -178,18 +212,18 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
               </View>
               {selectedId === item.id && (
                 <View style={styles.cardActions}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${item.title}`}
+                  style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
+                  onPress={event => { event.stopPropagation(); open(item.id, 'editor'); }}>
+                  <SquarePen size={22} color={iconColors.canvas} />
+                </TouchableOpacity>
                 <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Read ${item.title}`}
-                  style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing}
+                  style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
                   onPress={event => { event.stopPropagation(); open(item.id, 'reader'); }}>
                   <Glasses size={22} color={iconColors.read} />
                 </TouchableOpacity>
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${item.title}`}
-                  style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing}
-                  onPress={event => { event.stopPropagation(); open(item.id, 'editor'); }}>
-                  <Pencil size={22} color={iconColors.canvas} />
-                </TouchableOpacity>
                 <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Delete ${item.title}`}
-                  style={styles.deleteButton} disabled={openingId !== null || deletingId !== null || printing}
+                  style={styles.deleteButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
                   onPress={event => { event.stopPropagation(); remove(item); }}>
                   {deletingId === item.id ? <ActivityIndicator size="small" color="#DC2626" /> :
                     <Trash2 size={22} color={iconColors.delete} />}
@@ -232,7 +266,7 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center' },
   deleteButton: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#FFF1F2',
     alignItems: 'center', justifyContent: 'center' },
-  thumbnailFrame: { width: '100%', aspectRatio: 0.8, borderRadius: 6, overflow: 'hidden',
+  thumbnailFrame: { width: '100%', borderRadius: 6, overflow: 'hidden',
     borderWidth: 1, borderColor: '#EDF2F7', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   thumbnail: { width: '100%', height: '100%' },
   loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255, 255, 255, 0.75)',

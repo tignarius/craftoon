@@ -5,6 +5,7 @@ export interface SavedStory {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
   pages: ComicPage[];
 }
 
@@ -12,14 +13,25 @@ export interface StorySummary {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
   pageCount: number;
   thumbnailData?: string;
+  orientation?: 'portrait' | 'landscape';
+  canvasSize?: { width: number; height: number };
+}
+
+export interface CanvasDraft extends SavedStory {
+  pageIndex: number;
+  isSaved: boolean;
 }
 
 interface StoryLibraryModule {
+  saveDraft(draft: CanvasDraft): Promise<void>;
+  loadDraft(): Promise<CanvasDraft | null>;
   capturePages(pages: ComicPage[]): Promise<ComicPage[]>;
   restorePages(pages: ComicPage[]): Promise<void>;
   printStory(story: SavedStory): Promise<boolean>;
+  emailStory(story: SavedStory): Promise<boolean>;
   saveStory(story: SavedStory): Promise<StorySummary>;
   listStories(): Promise<StorySummary[]>;
   loadStory(id: string): Promise<SavedStory>;

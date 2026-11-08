@@ -9,28 +9,47 @@
 /* Begin PBXBuildFile section */
 		0C80B921A6F3F58F76C31292 /* libPods-Craftoon.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-Craftoon.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
+		40D8E60A19E918388B47ED04 /* CraftoonPurchaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A5D3D9902475E4B59DBDB3 /* CraftoonPurchaseTests.swift */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		7EF359EAF347E6E90314B309 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
 		A10000022CA45674006654EE /* RNPencilKitManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000012CA45674006654EE /* RNPencilKitManager.swift */; };
 		A10000042CA45674006654EE /* RNPencilKitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000032CA45674006654EE /* RNPencilKitView.swift */; };
 		A10000062CA45674006654EE /* RNPencilKitManager.m in Sources */ = {isa = PBXBuildFile; fileRef = A10000052CA45674006654EE /* RNPencilKitManager.m */; };
+		B20000012CA45674006654EE /* CraftoonProStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000022CA45674006654EE /* CraftoonProStore.swift */; };
+		DEEBEF32AD6835D714273249 /* CraftoonPro.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 6DF6996FB250F2162714849C /* CraftoonPro.storekit */; };
+		E46A0FC7FAD78B87B748AD01 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E2010EF155EDB750472B44BC /* Foundation.framework */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		9E736104509003E2D2C57ED7 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 13B07F861A680F5B00A75B9A;
+			remoteInfo = Craftoon;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		13B07F961A680F5B00A75B9A /* Craftoon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Craftoon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Craftoon/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Craftoon/Info.plist; sourceTree = "<group>"; };
 		13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = PrivacyInfo.xcprivacy; path = Craftoon/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		2AD79EAEB7BE709D9C9AB8F5 /* CraftoonPurchaseTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CraftoonPurchaseTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B4392A12AC88292D35C810B /* Pods-Craftoon.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Craftoon.debug.xcconfig"; path = "Target Support Files/Pods-Craftoon/Pods-Craftoon.debug.xcconfig"; sourceTree = "<group>"; };
 		5709B34CF0A7D63546082F79 /* Pods-Craftoon.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Craftoon.release.xcconfig"; path = "Target Support Files/Pods-Craftoon/Pods-Craftoon.release.xcconfig"; sourceTree = "<group>"; };
 		5DCACB8F33CDC322A6C60F78 /* libPods-Craftoon.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-Craftoon.a"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6DF6996FB250F2162714849C /* CraftoonPro.storekit */ = {isa = PBXFileReference; includeInIndex = 1; path = CraftoonPro.storekit; sourceTree = "<group>"; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Craftoon/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = Craftoon/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		A10000012CA45674006654EE /* RNPencilKitManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RNPencilKitManager.swift; path = Craftoon/RNPencilKitManager.swift; sourceTree = "<group>"; };
 		A10000032CA45674006654EE /* RNPencilKitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = RNPencilKitView.swift; path = Craftoon/RNPencilKitView.swift; sourceTree = "<group>"; };
 		A10000052CA45674006654EE /* RNPencilKitManager.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; name = RNPencilKitManager.m; path = Craftoon/RNPencilKitManager.m; sourceTree = "<group>"; };
+		B20000022CA45674006654EE /* CraftoonProStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CraftoonProStore.swift; path = Craftoon/CraftoonProStore.swift; sourceTree = "<group>"; };
+		E2010EF155EDB750472B44BC /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		F0A5D3D9902475E4B59DBDB3 /* CraftoonPurchaseTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CraftoonPurchaseTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -39,6 +58,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-Craftoon.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		57B7C23C39750E4A2C95A493 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E46A0FC7FAD78B87B748AD01 /* Foundation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -51,6 +78,7 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				A10000012CA45674006654EE /* RNPencilKitManager.swift */,
+				B20000022CA45674006654EE /* CraftoonProStore.swift */,
 				A10000032CA45674006654EE /* RNPencilKitView.swift */,
 				A10000052CA45674006654EE /* RNPencilKitManager.m */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
@@ -65,8 +93,17 @@
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
 				5DCACB8F33CDC322A6C60F78 /* libPods-Craftoon.a */,
+				4D7E76A83019B8EFE3DBE0E7 /* iOS */,
 			);
 			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		4D7E76A83019B8EFE3DBE0E7 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				E2010EF155EDB750472B44BC /* Foundation.framework */,
+			);
+			name = iOS;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -84,6 +121,8 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				D4F5987A5226583178F125CB /* CraftoonPurchaseTests */,
+				6DF6996FB250F2162714849C /* CraftoonPro.storekit */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -94,6 +133,7 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* Craftoon.app */,
+				2AD79EAEB7BE709D9C9AB8F5 /* CraftoonPurchaseTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -105,6 +145,15 @@
 				5709B34CF0A7D63546082F79 /* Pods-Craftoon.release.xcconfig */,
 			);
 			path = Pods;
+			sourceTree = "<group>";
+		};
+		D4F5987A5226583178F125CB /* CraftoonPurchaseTests */ = {
+			isa = PBXGroup;
+			children = (
+				F0A5D3D9902475E4B59DBDB3 /* CraftoonPurchaseTests.swift */,
+			);
+			name = CraftoonPurchaseTests;
+			path = CraftoonPurchaseTests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -131,6 +180,24 @@
 			productReference = 13B07F961A680F5B00A75B9A /* Craftoon.app */;
 			productType = "com.apple.product-type.application";
 		};
+		305437ACF3349978D674F11D /* CraftoonPurchaseTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ECC84F63DF35E9CF87C74F27 /* Build configuration list for PBXNativeTarget "CraftoonPurchaseTests" */;
+			buildPhases = (
+				6298D98A12277641AA9BACDD /* Sources */,
+				57B7C23C39750E4A2C95A493 /* Frameworks */,
+				5B1A347EFD8FD37DDA0D1013 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				9063062B849A0BA832098AE7 /* PBXTargetDependency */,
+			);
+			name = CraftoonPurchaseTests;
+			productName = CraftoonPurchaseTests;
+			productReference = 2AD79EAEB7BE709D9C9AB8F5 /* CraftoonPurchaseTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -141,6 +208,11 @@
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
 						LastSwiftMigration = 1120;
+						SystemCapabilities = {
+							com.apple.InAppPurchase = {
+								enabled = 1;
+							};
+						};
 					};
 				};
 			};
@@ -158,6 +230,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* Craftoon */,
+				305437ACF3349978D674F11D /* CraftoonPurchaseTests */,
 			);
 		};
 /* End PBXProject section */
@@ -170,6 +243,14 @@
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				7EF359EAF347E6E90314B309 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5B1A347EFD8FD37DDA0D1013 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DEEBEF32AD6835D714273249 /* CraftoonPro.storekit in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -200,9 +281,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Craftoon/Pods-Craftoon-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Craftoon/Pods-Craftoon-frameworks-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -239,9 +324,13 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Craftoon/Pods-Craftoon-resources-${CONFIGURATION}-input-files.xcfilelist",
 			);
+			inputPaths = (
+			);
 			name = "[CP] Copy Pods Resources";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Craftoon/Pods-Craftoon-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -257,12 +346,30 @@
 			files = (
 				761780ED2CA45674006654EE /* AppDelegate.swift in Sources */,
 				A10000022CA45674006654EE /* RNPencilKitManager.swift in Sources */,
+				B20000012CA45674006654EE /* CraftoonProStore.swift in Sources */,
 				A10000042CA45674006654EE /* RNPencilKitView.swift in Sources */,
 				A10000062CA45674006654EE /* RNPencilKitManager.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		6298D98A12277641AA9BACDD /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				40D8E60A19E918388B47ED04 /* CraftoonPurchaseTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		9063062B849A0BA832098AE7 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = Craftoon;
+			target = 13B07F861A680F5B00A75B9A /* Craftoon */;
+			targetProxy = 9E736104509003E2D2C57ED7 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
@@ -272,6 +379,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Q9489372GS;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Craftoon/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
@@ -301,6 +409,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = Q9489372GS;
 				INFOPLIST_FILE = Craftoon/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -318,6 +427,37 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		478F7538393ADBB9A2E784DB /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5709B34CF0A7D63546082F79 /* Pods-Craftoon.release.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				ENABLE_TESTING_SEARCH_PATHS = YES;
+				EXECUTABLE_NAME = CraftoonPurchaseTests;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SDKROOT)/Developer/Library/Frameworks",
+					"$(PLATFORM_DIR)/Developer/Library/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.Craftoon.PurchaseTests;
+				PRODUCT_NAME = CraftoonPurchaseTests;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Craftoon.app/Craftoon";
+				VALIDATE_PRODUCT = YES;
+				WRAPPER_NAME = CraftoonPurchaseTests.xctest;
 			};
 			name = Release;
 		};
@@ -467,6 +607,36 @@
 			};
 			name = Release;
 		};
+		FEA2C1E4B5824E1C9710A906 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 3B4392A12AC88292D35C810B /* Pods-Craftoon.debug.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				ENABLE_TESTING_SEARCH_PATHS = YES;
+				EXECUTABLE_NAME = CraftoonPurchaseTests;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SDKROOT)/Developer/Library/Frameworks",
+					"$(PLATFORM_DIR)/Developer/Library/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.Craftoon.PurchaseTests;
+				PRODUCT_NAME = CraftoonPurchaseTests;
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Craftoon.app/Craftoon";
+				WRAPPER_NAME = CraftoonPurchaseTests.xctest;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -484,6 +654,15 @@
 			buildConfigurations = (
 				83CBBA201A601CBA00E9B192 /* Debug */,
 				83CBBA211A601CBA00E9B192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ECC84F63DF35E9CF87C74F27 /* Build configuration list for PBXNativeTarget "CraftoonPurchaseTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				478F7538393ADBB9A2E784DB /* Release */,
+				FEA2C1E4B5824E1C9710A906 /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -8,6 +8,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   // React Native's device-info module still reads UIApplicationDelegate.window
   // when the iPad becomes active or changes orientation, even with scenes enabled.
   var window: UIWindow?
+  private var orientationObserver: NSObjectProtocol?
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
 
@@ -17,6 +18,21 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   ) -> Bool {
     // Enable native mouse enter/leave events for icon tooltips.
     RCTSetDispatchW3CPointerEvents(true)
+    UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+    orientationObserver = NotificationCenter.default.addObserver(
+      forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
+    ) { [weak self] _ in
+      guard CraftoonOrientationState.mask == .all,
+        let scene = self?.window?.windowScene, scene.activationState == .foregroundActive,
+        let root = self?.window?.rootViewController else { return }
+      let target = CraftoonOrientationState.physicalMask
+      guard target != .all,
+        target.rawValue != (1 << scene.interfaceOrientation.rawValue) else { return }
+      if #available(iOS 16.0, *) {
+        root.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: target)) { _ in }
+      } else { UIViewController.attemptRotationToDeviceOrientation() }
+    }
     let delegate = ReactNativeDelegate()
     let factory = RCTReactNativeFactory(delegate: delegate)
     delegate.dependencyProvider = RCTAppDependencyProvider()
@@ -25,6 +41,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     reactNativeFactory = factory
 
     return true
+  }
+
+  func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+    CraftoonOrientationState.mask
   }
 
   func application(
@@ -74,5 +94,22 @@ class ReactNativeDelegate: RCTDefaultReactNativeFactoryDelegate {
 #else
     Bundle.main.url(forResource: "main", withExtension: "jsbundle")
 #endif
+  }
+}
+
+
+// Editor/reader use one supported orientation. Library and splash use all
+// orientations so UIKit can follow the physical iPad again.
+enum CraftoonOrientationState {
+  static var mask: UIInterfaceOrientationMask = .all
+  static var generation = 0
+  static var physicalMask: UIInterfaceOrientationMask {
+    switch UIDevice.current.orientation {
+    case .portrait: return .portrait
+    case .portraitUpsideDown: return .portraitUpsideDown
+    case .landscapeLeft: return .landscapeRight
+    case .landscapeRight: return .landscapeLeft
+    default: return .all
+    }
   }
 }

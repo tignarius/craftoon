@@ -10,6 +10,7 @@ import { ComicBubble } from '../types/comic';
 import { Trash2 } from 'lucide-react-native';
 
 interface SpeechBubbleProps {
+  canvasScale?: number;
   bubble: ComicBubble;
   isSelected: boolean;
   onSelect: (id: string) => void;
@@ -18,12 +19,15 @@ interface SpeechBubbleProps {
 }
 
 export const SpeechBubble: React.FC<SpeechBubbleProps> = ({
+  canvasScale = 1,
   bubble,
   isSelected,
   onSelect,
   onUpdate,
   onDelete,
 }) => {
+  const scaleRef = useRef(canvasScale);
+  scaleRef.current = canvasScale;
   const startPosRef = useRef({ x: bubble.x, y: bubble.y });
   const startSizeRef = useRef({ width: bubble.width, height: bubble.height });
 
@@ -36,8 +40,8 @@ export const SpeechBubble: React.FC<SpeechBubbleProps> = ({
       },
       onPanResponderMove: (_, g) => {
         onUpdate(bubble.id, {
-          x: Math.max(0, startPosRef.current.x + g.dx),
-          y: Math.max(0, startPosRef.current.y + g.dy),
+          x: Math.max(0, startPosRef.current.x + g.dx / scaleRef.current),
+          y: Math.max(0, startPosRef.current.y + g.dy / scaleRef.current),
         });
       },
     })
@@ -52,8 +56,8 @@ export const SpeechBubble: React.FC<SpeechBubbleProps> = ({
       },
       onPanResponderMove: (_, g) => {
         onUpdate(bubble.id, {
-          width: Math.max(90, startSizeRef.current.width + g.dx),
-          height: Math.max(50, startSizeRef.current.height + g.dy),
+          width: Math.max(90, startSizeRef.current.width + g.dx / scaleRef.current),
+          height: Math.max(50, startSizeRef.current.height + g.dy / scaleRef.current),
         });
       },
     })

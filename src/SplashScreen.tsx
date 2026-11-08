@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useRef } from 'react';
+import { ModeInfoButton } from './components/ModeInfoButton';
+import { CanvasPickerAnchor } from './components/CanvasOrientationPicker';
 import {
   View,
   StyleSheet,
@@ -7,56 +9,33 @@ import {
   useWindowDimensions,
   SafeAreaView,
 } from 'react-native';
-import { AppText as Text } from './components/AppText';
 import LinearGradient from 'react-native-linear-gradient';
 import CraftoonTitle from './assets/craftoon_title.svg';
 import CraftoonSubtitle from './assets/craftoon_subtitle.svg';
 import { CanvasMenuIcon, LibraryMenuIcon } from './components/StartMenuIcons';
 
 interface SplashScreenProps {
-    onNewStory: () => void;
+    onNewStory: (anchor?: CanvasPickerAnchor) => void;
     onLoadStory: () => void;
 }
 
 // Tooltip updates stay local to the button.
 const StartMenuAction = ({ name, onPress, children }: {
     name: string;
-    onPress: () => void;
+    onPress: (anchor?: CanvasPickerAnchor) => void;
     children: React.ReactNode;
 }) => {
-    const [showName, setShowName] = useState(false);
-    return (
-        <View
-            style={styles.menuAction}
-            onPointerEnter={event => {
-                if (event.nativeEvent.pointerType !== 'touch') { setShowName(true); }
-            }}
-            onPointerLeave={() => setShowName(false)}
-        >
-            <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={name}
-                onPress={onPress}
-                onFocus={() => setShowName(true)}
-                onBlur={() => setShowName(false)}
-                onLongPress={() => setShowName(true)}
-                onPressOut={() => setShowName(false)}
-                style={({ pressed }) => [
-                    styles.iconButton,
-                    showName && styles.iconHovered,
-                    pressed && styles.iconPressed,
-                ]}
-            >
-                <View pointerEvents="none" accessible={false}>{children}</View>
-            </Pressable>
-            {showName && (
-                <View pointerEvents="none" style={styles.tooltip}>
-                    <View style={styles.tooltipArrow} />
-                    <Text style={styles.tooltipText}>{name}</Text>
-                </View>
-            )}
-        </View>
-    );
+    const anchorView = useRef<View>(null);
+    const open = () => {
+        if (!anchorView.current) { onPress(); return; }
+        anchorView.current.measureInWindow((x, y, width, height) => onPress({ x, y, width, height }));
+    };
+    return <View ref={anchorView} collapsable={false} style={styles.menuAction}>
+        <Pressable accessibilityRole="button" accessibilityLabel={name} onPress={open}
+            style={({ pressed }) => [styles.iconButton, pressed && styles.iconPressed]}>
+            <View pointerEvents="none" accessible={false}>{children}</View>
+        </Pressable>
+    </View>;
 };
 
 const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) => {
@@ -70,7 +49,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
     const subtitleWidth = titleWidth * 0.65;
     const subtitleHeight = subtitleWidth * (200.07 / 1192.2);
 
-    const iconSize = isLandscape ? Math.min(height * 0.48, 340) : Math.min(width * 0.65, 340);
+    const iconSize = isLandscape ? Math.min(height * 0.4, 280) : Math.min(width * 0.54, 280);
 
     return (
         <LinearGradient
@@ -81,6 +60,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
             style={[styles.gradient, { width, height }]}
         >
             <SafeAreaView style={styles.safeArea}>
+                <View style={styles.modeInfo}><ModeInfoButton mode="welcome" /></View>
                 <View style={styles.container}>
 
                     {/* 중앙 집중형 메인 컨텐츠 래퍼 */}
@@ -115,10 +95,10 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
                         {/* Icon-only entry points; names appear on hover or keyboard focus. */}
                         <View style={styles.menuContainer}>
                             <StartMenuAction name="Canvas" onPress={onNewStory}>
-                                <CanvasMenuIcon size={isLandscape ? 104 : 120} />
+                                <CanvasMenuIcon size={isLandscape ? 84 : 96} />
                             </StartMenuAction>
                             <StartMenuAction name="Library" onPress={onLoadStory}>
-                                <LibraryMenuIcon size={isLandscape ? 104 : 120} />
+                                <LibraryMenuIcon size={isLandscape ? 84 : 96} />
                             </StartMenuAction>
                         </View>
                     </View>
@@ -130,6 +110,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
 };
 
 const styles = StyleSheet.create({
+    modeInfo: { position: 'absolute', left: 20, top: 48, zIndex: 10 },
     gradient: {
         flex: 1,
     },
@@ -186,41 +167,11 @@ const styles = StyleSheet.create({
         padding: 8,
         alignItems: 'center',
         justifyContent: 'center',
-        shadowColor: '#29134D',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.22,
-        shadowRadius: 10,
-    },
-    iconHovered: {
-        transform: [{ translateY: -4 }, { scale: 1.05 }],
-        shadowOpacity: 0.32,
     },
     iconPressed: {
         transform: [{ scale: 0.95 }],
     },
-    tooltip: {
-        position: 'absolute',
-        top: '100%',
-        marginTop: 8,
-        backgroundColor: '#2D2045',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 9,
-        alignItems: 'center',
-    },
-    tooltipArrow: {
-        position: 'absolute',
-        top: -5,
-        width: 10,
-        height: 10,
-        backgroundColor: '#2D2045',
-        transform: [{ rotate: '45deg' }],
-    },
-    tooltipText: {
-        color: '#FFFFFF',
-        fontSize: 16,
-        fontWeight: '700',
-    },
+
 });
 
 export default SplashScreen;

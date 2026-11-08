@@ -10,7 +10,10 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   private static var sharedToolPicker: PKToolPicker? = {
     if #available(iOS 14.0, *) {
-      return PKToolPicker()
+      let picker = PKToolPicker()
+      picker.overrideUserInterfaceStyle = .light
+      picker.colorUserInterfaceStyle = .light
+      return picker
     }
     return nil
   }()
@@ -288,6 +291,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
     isUsingTool = false
+    CraftoonDraftRecovery.shared.flush()
     scheduleDrawingSync()
   }
 
@@ -297,6 +301,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     if !panelId.isEmpty {
       RNPencilKitView.drawingCache[panelId] = canvasView.drawing
     }
+    CraftoonDraftRecovery.shared.scheduleSave()
     // Final pressure updates can arrive after didEndUsingTool.
     if !isUsingTool {
       scheduleDrawingSync()

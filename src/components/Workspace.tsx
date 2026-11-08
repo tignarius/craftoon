@@ -5,6 +5,7 @@ import {
   PanResponder,
   LayoutChangeEvent,
 } from 'react-native';
+import { fitCanvas } from '../utils/canvasFormat';
 import { AppText as Text } from './AppText';
 import { Panel } from './Panel';
 import { SpeechBubble } from './SpeechBubble';
@@ -29,6 +30,7 @@ const checkCollision = (
 };
 
 interface WorkspaceProps {
+  canvasSize: { width: number; height: number };
   onSheetBoundsChange: (bounds: { width: number; height: number }) => void;
   panels: ComicPanel[];
   panelModes: Record<string, PanelMode>;
@@ -47,6 +49,7 @@ interface WorkspaceProps {
 }
 
 export const Workspace: React.FC<WorkspaceProps> = ({
+  canvasSize,
   panels,
   panelModes,
   bubbles,
@@ -64,11 +67,13 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   onSheetBoundsChange,
 }) => {
   const [selectedBubbleId, setSelectedBubbleId] = useState<string | null>(null);
-  const [sheetBounds, setSheetBounds] = useState<{ width: number; height: number }>({
-    width: 900,
-    height: 1200,
-  });
-
+  const sheetBounds = canvasSize;
+  const [viewport, setViewport] = useState({ width: 1, height: 1 });
+  const scale = fitCanvas(canvasSize, viewport);
+  // Changing sibling order can detach/reinsert a live PencilKit view in Fabric.
+  // Keep native siblings stable; only their explicit stacking values change.
+  const panelStackOrder = new Map(panels.map((panel, index) => [panel.id, index]));
+  const renderPanels = [...panels].sort((a, b) => a.id.localeCompare(b.id));
   useEffect(() => { onSheetBoundsChange(sheetBounds); }, [sheetBounds, onSheetBoundsChange]);
 
   const [creatingRect, setCreatingRect] = useState<{
@@ -104,10 +109,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   const onBackgroundTapRef = useRef(onBackgroundTap);
   onBackgroundTapRef.current = onBackgroundTap;
 
-  const handleSheetLayout = (e: LayoutChangeEvent) => {
-    const { width, height } = e.nativeEvent.layout;
-    setSheetBounds({ width, height });
-    sheetBoundsRef.current = { width, height };
+  const handleViewportLayout = (event: LayoutChangeEvent) => {
+    const { width, height } = event.nativeEvent.layout;
+    setViewport({ width, height });
   };
 
   // 패널들 뒤에 깔리는 순수 배경(Background) PanResponder
@@ -269,11 +273,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   ).current;
 
   return (
-    <View style={styles.workspaceContainer}>
-      <View
-        style={styles.sheet}
-        onLayout={handleSheetLayout}
-      >
+    <View style={styles.workspaceContainer} onLayout={handleViewportLayout}>
+      <View style={{ width: canvasSize.width * scale, height: canvasSize.height * scale }}>
+      <View style={[styles.sheet, { width: canvasSize.width, height: canvasSize.height,
+        left: (canvasSize.width * scale - canvasSize.width) / 2,
+        top: (canvasSize.height * scale - canvasSize.height) / 2, transform: [{ scale }] }]}>
+
         {/* LAYER 1: 패널들 뒤에 깔리는 순수 배경 캔버스 (빈 공간 터치 및 드래그 전용) */}
         <View
           style={StyleSheet.absoluteFill}
@@ -288,13 +293,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         )}
 
         {/* LAYER 2: 패널들 렌더링 (배경 위에 위치하므로 펜슬 드로잉 시 배경 핸들러가 절대 가로채지 않음!) */}
-        {panels.map((panel) => (
+        <View style={styles.panelLayer} pointerEvents="box-none" collapsable={false}>
+        {renderPanels.map((panel) => (
           <Panel
             key={panel.id}
+            stackOrder={panelStackOrder.get(panel.id)}
             panel={panel}
             mode={panelModes[panel.id]}
             otherPanels={panels.filter((p) => p.id !== panel.id)}
             sheetBounds={sheetBounds}
+            canvasScale={scale}
             onGuidesChange={setGuides}
             onSelect={onPanelSelect}
             onModeChange={(id) => {
@@ -312,6 +320,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             onDoubleTap={onPanelDoubleTap}
           />
         ))}
+        </View>
 
         {/* LAYER 3: 자석 스냅 가이드라인 (최상위) */}
         {guides.map((g, idx) =>
@@ -351,6 +360,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
           <SpeechBubble
             key={bubble.id}
             bubble={bubble}
+            canvasScale={scale}
             isSelected={selectedBubbleId === bubble.id}
             onSelect={(id) => setSelectedBubbleId(id)}
             onUpdate={onUpdateBubble}
@@ -358,21 +368,24 @@ export const Workspace: React.FC<WorkspaceProps> = ({
           />
         ))}
       </View>
+      </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  // Keep panel stacking separate from guides, bubbles and their controls.
+  panelLayer: { ...StyleSheet.absoluteFillObject, zIndex: 0 },
   workspaceContainer: {
     flex: 1,
     backgroundColor: '#F1F5F9',
-    padding: 16,
+    paddingVertical: 12,
+    paddingHorizontal: 36,
     justifyContent: 'center',
     alignItems: 'center',
   },
   sheet: {
-    flex: 1,
-    width: '100%',
+    position: 'absolute',
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
     shadowColor: '#000',

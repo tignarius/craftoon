@@ -6,7 +6,7 @@ import {
   PanResponder,
 } from 'react-native';
 import { ComicPanel, PanelMode } from '../types/comic';
-import { MousePointer2, Pen, Edit3, Trash2 } from 'lucide-react-native';
+import { Move, Pen, Edit3, Trash2 } from 'lucide-react-native';
 import { PencilKitView } from '../../PencilKitView';
 
 const MODE_STYLE = {
@@ -17,6 +17,8 @@ const MODE_STYLE = {
 };
 
 interface PanelProps {
+  stackOrder?: number;
+  canvasScale?: number;
   panel: ComicPanel;
   mode: PanelMode | undefined;
   otherPanels?: ComicPanel[];
@@ -34,8 +36,15 @@ interface PanelProps {
 const PANEL_GAP = 16;
 const SNAP_THRESHOLD = 18;
 const WORKSPACE_PADDING = 12;
+const PANEL_BORDER_WIDTH = 2;
+const ACTIVE_BORDER_WIDTH = 3;
+const RESIZE_HANDLE_SIZE = 28;
+// The active outline is independent of the fixed layout border.
+const RESIZE_HANDLE_OFFSET = ACTIVE_BORDER_WIDTH / 2 - PANEL_BORDER_WIDTH - RESIZE_HANDLE_SIZE / 2;
 
 export const Panel: React.FC<PanelProps> = ({
+  stackOrder = 0,
+  canvasScale = 1,
   panel,
   mode,
   otherPanels = [],
@@ -49,6 +58,8 @@ export const Panel: React.FC<PanelProps> = ({
   onDoubleTap,
   onDrawingUpdate,
 }) => {
+  const scaleRef = useRef(canvasScale);
+  scaleRef.current = canvasScale;
   const modeRef = useRef(mode);
   modeRef.current = mode;
 
@@ -107,8 +118,8 @@ export const Panel: React.FC<PanelProps> = ({
         const dx = Math.abs(g.dx);
         const dy = Math.abs(g.dy);
         if (dx > 12 || dy > 12) {
-          let targetX = startPosRef.current.x + g.dx;
-          let targetY = startPosRef.current.y + g.dy;
+          let targetX = startPosRef.current.x + g.dx / scaleRef.current;
+          let targetY = startPosRef.current.y + g.dy / scaleRef.current;
           const activeGuides: { type: 'vertical' | 'horizontal'; pos: number }[] = [];
           const myW = panelRef.current.width;
           const myH = panelRef.current.height;
@@ -156,8 +167,11 @@ export const Panel: React.FC<PanelProps> = ({
             }
           }
 
-          targetX = Math.max(WORKSPACE_PADDING, targetX);
-          targetY = Math.max(WORKSPACE_PADDING, targetY);
+          const bounds = sheetBoundsRef.current;
+          const maxX = bounds ? Math.max(WORKSPACE_PADDING, bounds.width - WORKSPACE_PADDING - myW) : Infinity;
+          const maxY = bounds ? Math.max(WORKSPACE_PADDING, bounds.height - WORKSPACE_PADDING - myH) : Infinity;
+          targetX = Math.min(maxX, Math.max(WORKSPACE_PADDING, targetX));
+          targetY = Math.min(maxY, Math.max(WORKSPACE_PADDING, targetY));
 
           onMoveRef.current(panelRef.current.id, { x: targetX, y: targetY });
           if (onGuidesChangeRef.current) {
@@ -201,8 +215,8 @@ export const Panel: React.FC<PanelProps> = ({
         startSizeRef.current = { width: panelRef.current.width, height: panelRef.current.height };
       },
       onPanResponderMove: (_, g) => {
-        let targetW = Math.max(80, startSizeRef.current.width + g.dx);
-        let targetH = Math.max(80, startSizeRef.current.height + g.dy);
+        let targetW = Math.max(80, startSizeRef.current.width + g.dx / scaleRef.current);
+        let targetH = Math.max(80, startSizeRef.current.height + g.dy / scaleRef.current);
         const activeGuides: { type: 'vertical' | 'horizontal'; pos: number }[] = [];
 
         const rightEdge = panelRef.current.x + targetW;
@@ -278,9 +292,11 @@ export const Panel: React.FC<PanelProps> = ({
           top: panel.y,
           width: panel.width,
           height: panel.height,
+          zIndex: stackOrder,
+          elevation: 3 + stackOrder,
           borderColor: styleConfig.border,
           borderStyle: 'solid', // 모든 모드에서 점선 없이 깔끔한 실선 유지
-          borderWidth: mode ? 3 : 2,
+          borderWidth: PANEL_BORDER_WIDTH,
         },
       ]}
     >
@@ -300,6 +316,9 @@ export const Panel: React.FC<PanelProps> = ({
         />
       </View>
 
+      {/* Selection must not resize or shift the live PencilKit canvas. */}
+      {mode && <View pointerEvents="none" style={[styles.selectedOutline, { borderColor: styleConfig.border }]} />}
+
       {/* 2. 레이아웃 모드/선택 상태일 때만 동작하는 이동 오버레이 */}
       {!isDrawingOrEditing && (
         <View style={StyleSheet.absoluteFill} {...movePR.panHandlers} />
@@ -314,7 +333,7 @@ export const Panel: React.FC<PanelProps> = ({
             activeOpacity={0.75}
             hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
           >
-            {mode === 'layout' && <MousePointer2 size={15} color={styleConfig.icon} />}
+            {mode === 'layout' && <Move size={15} color={styleConfig.icon} />}
             {mode === 'draw' && <Pen size={15} color={styleConfig.icon} />}
             {mode === 'edit' && <Edit3 size={15} color={styleConfig.icon} />}
           </TouchableOpacity>
@@ -358,6 +377,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 1,
   },
+  selectedOutline: {
+    position: 'absolute',
+    top: -PANEL_BORDER_WIDTH,
+    left: -PANEL_BORDER_WIDTH,
+    right: -PANEL_BORDER_WIDTH,
+    bottom: -PANEL_BORDER_WIDTH,
+    borderWidth: ACTIVE_BORDER_WIDTH,
+    borderRadius: 2,
+    zIndex: 1,
+  },
   topBar: {
     position: 'absolute',
     top: 6,
@@ -394,10 +423,10 @@ const styles = StyleSheet.create({
   },
   resizeHandle: {
     position: 'absolute',
-    bottom: -12,
-    right: -12,
-    width: 28,
-    height: 28,
+    bottom: RESIZE_HANDLE_OFFSET,
+    right: RESIZE_HANDLE_OFFSET,
+    width: RESIZE_HANDLE_SIZE,
+    height: RESIZE_HANDLE_SIZE,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 40,

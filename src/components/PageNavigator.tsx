@@ -1,125 +1,51 @@
-import React from 'react';
-import {
-  View,
-  TouchableOpacity,
-  StyleSheet,
-} from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, TouchableOpacity, View } from 'react-native';
+import { Minus, Plus } from 'lucide-react-native';
 import { AppText as Text } from './AppText';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react-native';
+import { PageArrow } from './PageArrow';
 
-interface PageNavigatorProps {
-  currentPageIndex: number;
-  totalPages: number;
-  onPrevPage: () => void;
-  onNextPage: () => void;
-  onAddPage: () => void;
+export function PageNavigator({ dismissSignal, currentPageIndex, totalPages, onPrevious, onNext, onAddPage, onDeletePage }: {
+  dismissSignal?: number;
+  currentPageIndex: number; totalPages: number;
+  onPrevious: () => void; onNext: () => void; onAddPage: () => void; onDeletePage?: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => { setExpanded(false); }, [dismissSignal]);
+  const first = currentPageIndex === 0;
+  const last = currentPageIndex >= totalPages - 1;
+  const actions = [
+    { label: 'Previous page', disabled: first, onPress: onPrevious, icon: <PageArrow direction="left" /> },
+    { label: 'Delete current page', disabled: false, onPress: onDeletePage, icon: <Minus size={18} color="#64748B" /> },
+    { label: 'Add next canvas page', disabled: false, onPress: onAddPage, icon: <Plus size={18} color="#64748B" /> },
+    { label: 'Next page', disabled: last, onPress: onNext, icon: <PageArrow direction="right" /> },
+  ];
+  return <View style={styles.navigation} onTouchStart={event => event.stopPropagation()}>
+    {expanded && <View style={styles.controls}>
+      {actions.map(action => <TouchableOpacity key={action.label} accessibilityRole="button"
+        accessibilityLabel={action.label} accessibilityState={{ disabled: action.disabled }}
+        disabled={action.disabled} onPress={action.onPress} activeOpacity={0.65}
+        style={[styles.button, action.disabled && styles.disabled]}>
+        {action.icon}
+      </TouchableOpacity>)}
+    </View>}
+    <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Page ${currentPageIndex + 1} of ${totalPages}`}
+      accessibilityHint="Show or hide page controls" accessibilityState={{ expanded }}
+      onPress={() => setExpanded(value => !value)} style={styles.toggle} activeOpacity={0.65}>
+      <Text accessible={false} style={styles.number}>{currentPageIndex + 1} / {totalPages}</Text>
+    </TouchableOpacity>
+  </View>;
 }
-
-export const PageNavigator: React.FC<PageNavigatorProps> = ({
-  currentPageIndex,
-  totalPages,
-  onPrevPage,
-  onNextPage,
-  onAddPage,
-}) => {
-  return (
-    <View style={styles.container}>
-      <TouchableOpacity
-        style={[styles.navBtn, currentPageIndex === 0 && styles.disabledBtn]}
-        onPress={onPrevPage}
-        disabled={currentPageIndex === 0}
-        activeOpacity={0.7}
-      >
-        <ChevronLeft size={20} color={currentPageIndex === 0 ? '#CBD5E1' : '#334155'} />
-      </TouchableOpacity>
-
-      <View style={styles.pageBadge}>
-        <Text style={styles.pageText}>
-          {currentPageIndex + 1} <Text style={styles.slashText}>/</Text> {totalPages}
-        </Text>
-      </View>
-
-      <TouchableOpacity
-        style={[styles.navBtn, currentPageIndex >= totalPages - 1 && styles.disabledBtn]}
-        onPress={onNextPage}
-        disabled={currentPageIndex >= totalPages - 1}
-        activeOpacity={0.7}
-      >
-        <ChevronRight size={20} color={currentPageIndex >= totalPages - 1 ? '#CBD5E1' : '#334155'} />
-      </TouchableOpacity>
-
-      <View style={styles.divider} />
-
-      <TouchableOpacity style={styles.addBtn} onPress={onAddPage} activeOpacity={0.7}>
-        <Plus size={18} color="#0D9488" />
-        <Text style={styles.addText}>Page</Text>
-      </TouchableOpacity>
-    </View>
-  );
-};
-
 const styles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    bottom: 24,
-    left: 24,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 30,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 10,
-    elevation: 8,
-    zIndex: 999,
-  },
-  navBtn: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  disabledBtn: {
-    opacity: 0.35,
-  },
-  pageBadge: {
-    paddingHorizontal: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pageText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#0F172A',
-  },
-  slashText: {
-    color: '#94A3B8',
-    fontWeight: '500',
-  },
-  divider: {
-    width: 1,
-    height: 20,
-    backgroundColor: '#E2E8F0',
-    marginHorizontal: 6,
-  },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 14,
-    backgroundColor: '#CCFBF1',
-  },
-  addText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#0D9488',
-  },
+  navigation: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  controls: { flexDirection: 'row', padding: 3, gap: 3, borderRadius: 12,
+    borderWidth: 1, borderColor: 'rgba(100,116,139,0.22)', backgroundColor: 'rgba(241,245,249,0.45)' },
+  button: { width: 32, height: 32, borderRadius: 8, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.65)' },
+  disabled: { opacity: 0.25 },
+  toggle: { minWidth: 44, height: 32, paddingHorizontal: 8, borderRadius: 9,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: '#FFFFFF',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(148,163,184,0.28)',
+    shadowColor: '#334155', shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12, shadowRadius: 3, elevation: 2 },
+  number: { fontSize: 14, fontWeight: '600', color: '#64748B' },
 });

@@ -7,6 +7,7 @@ export const iconColors = {
   save: '#3B82F6',
   newComic: '#647ACB',
   print: '#1ABC9C',
+  email: '#3B82F6',
   delete: '#DC2626',
 };
 
