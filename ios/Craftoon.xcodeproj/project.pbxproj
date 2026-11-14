@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C30000012CA45674006654EE /* craftoon-quick-guide.pdf in Resources */ = {isa = PBXBuildFile; fileRef = C30000022CA45674006654EE /* craftoon-quick-guide.pdf */; };
 		0C80B921A6F3F58F76C31292 /* libPods-Craftoon.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 5DCACB8F33CDC322A6C60F78 /* libPods-Craftoon.a */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		40D8E60A19E918388B47ED04 /* CraftoonPurchaseTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0A5D3D9902475E4B59DBDB3 /* CraftoonPurchaseTests.swift */; };
@@ -32,6 +33,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C30000022CA45674006654EE /* craftoon-quick-guide.pdf */ = {isa = PBXFileReference; lastKnownFileType = image.pdf; name = "craftoon-quick-guide.pdf"; path = "Craftoon/craftoon-quick-guide.pdf"; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* Craftoon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Craftoon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Craftoon/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Craftoon/Info.plist; sourceTree = "<group>"; };
@@ -75,6 +77,7 @@
 		13B07FAE1A68108700A75B9A /* Craftoon */ = {
 			isa = PBXGroup;
 			children = (
+				C30000022CA45674006654EE /* craftoon-quick-guide.pdf */,
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				761780EC2CA45674006654EE /* AppDelegate.swift */,
 				A10000012CA45674006654EE /* RNPencilKitManager.swift */,
@@ -240,6 +243,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C30000012CA45674006654EE /* craftoon-quick-guide.pdf in Resources */,
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				7EF359EAF347E6E90314B309 /* PrivacyInfo.xcprivacy in Resources */,
@@ -393,11 +397,11 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.squareplayer.craftoon;
 				PRODUCT_NAME = Craftoon;
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Debug;
@@ -422,10 +426,10 @@
 					"-ObjC",
 					"-lc++",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = "org.reactjs.native.example.$(PRODUCT_NAME:rfc1034identifier)";
+				PRODUCT_BUNDLE_IDENTIFIER = com.squareplayer.craftoon;
 				PRODUCT_NAME = Craftoon;
 				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				VERSIONING_SYSTEM = "apple-generic";
 			};
 			name = Release;
@@ -450,7 +454,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.Craftoon.PurchaseTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.squareplayer.craftoon.PurchaseTests;
 				PRODUCT_NAME = CraftoonPurchaseTests;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = NO;
@@ -533,7 +537,7 @@
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				USE_HERMES = true;
 			};
 			name = Debug;
@@ -601,7 +605,7 @@
 				);
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
+				TARGETED_DEVICE_FAMILY = 2;
 				USE_HERMES = true;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -627,7 +631,7 @@
 					"@executable_path/Frameworks",
 					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = org.reactjs.native.example.Craftoon.PurchaseTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.squareplayer.craftoon.PurchaseTests;
 				PRODUCT_NAME = CraftoonPurchaseTests;
 				SDKROOT = iphoneos;
 				SWIFT_EMIT_LOC_STRINGS = NO;

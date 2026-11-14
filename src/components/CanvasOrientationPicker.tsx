@@ -1,9 +1,22 @@
-import React from 'react';
+import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
 import { CanvasOrientation } from '../utils/canvasFormat';
 
-export interface CanvasPickerAnchor { x: number; y: number; width: number; height: number }
+export interface CanvasPickerAnchor {
+  x: number; y: number; width: number; height: number;
+  measure?: (onMeasured: (rect: CanvasPickerAnchor) => void) => void;
+}
+
+// Keep a live ref rather than the native view itself, so an open picker can
+// follow rotation/reflow without retaining an unmounted source screen.
+export function measureCanvasPickerAnchor(target: React.RefObject<View | null>, onReady: (anchor?: CanvasPickerAnchor) => void) {
+  const measure = (onMeasured: (rect: CanvasPickerAnchor) => void) => {
+    target.current?.measureInWindow((x, y, width, height) => onMeasured({ x, y, width, height }));
+  };
+  if (!target.current) { onReady(); return; }
+  measure(rect => onReady({ ...rect, measure }));
+}
 
 function FormatPicture({ orientation }: { orientation: CanvasOrientation }) {
   const width = orientation === 'portrait' ? 34 : 48;
@@ -31,16 +44,50 @@ export function CanvasOrientationPicker({ visible, anchor, onSelect, onCancel }:
   onSelect: (orientation: CanvasOrientation) => void; onCancel: () => void;
 }) {
   const { width, height } = useWindowDimensions();
+  const [measured, setMeasured] = useState<{ source: CanvasPickerAnchor; rect: CanvasPickerAnchor; width: number; height: number }>();
+  const [cardHeight, setCardHeight] = useState(86);
+  const frame = useRef<number | null>(null);
+  const generation = useRef(0);
+  const remeasure = useCallback(() => {
+    const revision = ++generation.current;
+    if (frame.current !== null) { cancelAnimationFrame(frame.current); frame.current = null; }
+    if (!visible || !anchor?.measure) { return; }
+    // Measure after native layout, not from the pre-rotation button coordinates.
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      anchor.measure?.(rect => {
+        if (generation.current !== revision || rect.width <= 0 || rect.height <= 0 ||
+          ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)) { return; }
+        setMeasured(previous => previous?.source === anchor && previous.width === width && previous.height === height &&
+          previous.rect.x === rect.x && previous.rect.y === rect.y && previous.rect.width === rect.width && previous.rect.height === rect.height
+          ? previous : { source: anchor, rect, width, height });
+      });
+    });
+  }, [anchor, visible, width, height]);
+  useLayoutEffect(() => {
+    remeasure();
+    return () => {
+      generation.current += 1;
+      if (frame.current !== null) { cancelAnimationFrame(frame.current); frame.current = null; }
+    };
+  }, [remeasure]);
+  const ready = !anchor?.measure || (measured?.source === anchor && measured.width === width && measured.height === height);
+  const resolved = measured && measured.source === anchor ? measured.rect : anchor;
   if (!visible) { return null; }
-  const center = anchor ? anchor.x + anchor.width / 2 : 80;
-  const left = Math.max(12, Math.min(width - 180, center - 84));
-  const top = Math.max(12, Math.min(height - 98, anchor ? anchor.y + anchor.height + 8 : 100));
-  const arrowLeft = Math.max(14, Math.min(140, center - left - 6));
-  return <View style={styles.overlay} accessibilityViewIsModal>
+  const center = resolved ? resolved.x + resolved.width / 2 : 80;
+  const landscape = width > height;
+  const desiredLeft = landscape && resolved ? resolved.x - 168 - 8 : center - 84;
+  const desiredTop = landscape && resolved
+    ? resolved.y + (resolved.height - cardHeight) / 2
+    : resolved ? resolved.y + resolved.height + 8 : 100;
+  const left = Math.max(12, Math.min(width - 180, desiredLeft));
+  const top = Math.max(12, Math.min(height - cardHeight - 12, desiredTop));
+  return <View style={styles.overlay} accessibilityViewIsModal onLayout={remeasure}>
     <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button"
       accessibilityLabel="Cancel canvas selection" onPress={onCancel} />
-    <View style={[styles.card, { left, top }]}>
-      <View style={[styles.caret, { left: arrowLeft }]} />
+    <View testID="canvas-orientation-card" pointerEvents={ready ? 'auto' : 'none'} accessibilityElementsHidden={!ready}
+      onLayout={event => { const next = event.nativeEvent.layout.height; if (next > 0) { setCardHeight(previous => previous === next ? previous : next); } }}
+      style={[styles.card, { left, top, opacity: ready ? 1 : 0 }]}>
       <View style={styles.choices}>
         {(['portrait', 'landscape'] as const).map(orientation => <TouchableOpacity key={orientation}
           accessibilityRole="button" accessibilityLabel={orientation === 'portrait' ? 'Portrait canvas' : 'Landscape canvas'}
@@ -57,8 +104,6 @@ const styles = StyleSheet.create({
   card: { position: 'absolute', width: 168, backgroundColor: '#FFFFFF', borderRadius: 14,
     padding: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: '#E2E8F0',
     shadowColor: '#334155', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.16, shadowRadius: 10, elevation: 6 },
-  caret: { position: 'absolute', top: -6, width: 12, height: 12,
-    backgroundColor: '#FFFFFF', transform: [{ rotate: '45deg' }] },
   choices: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
   choice: { borderRadius: 10, flex: 1, alignItems: 'center', paddingVertical: 4 },
 });

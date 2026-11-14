@@ -27,6 +27,7 @@ jest.mock('../src/components/Header', () => ({ Header: jest.fn(() => null) }));
 jest.mock('../src/components/Workspace', () => ({ Workspace: jest.fn(() => null) }));
 jest.mock('../src/components/ComicReader', () => ({ ComicReader: jest.fn(() => null) }));
 jest.mock('../src/services/storyLibrary', () => ({ storyLibrary: {
+  pickTracingImage: jest.fn(), retainInkReferences: jest.fn(),
   saveDraft: jest.fn(), loadDraft: jest.fn(),
   capturePages: jest.fn(), restorePages: jest.fn(), loadStory: jest.fn(), saveStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(),
 } }));
@@ -47,6 +48,7 @@ beforeEach(async () => {
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   jest.spyOn(Alert, 'prompt').mockImplementation(() => {});
   (storyLibrary.loadDraft as jest.Mock).mockResolvedValue(null);
+  (storyLibrary.retainInkReferences as jest.Mock).mockResolvedValue(undefined);
   (storyLibrary.saveDraft as jest.Mock).mockResolvedValue(undefined);
   (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items);
   (storyLibrary.restorePages as jest.Mock).mockResolvedValue(undefined);
@@ -914,9 +916,9 @@ test('selecting a covered panel or entering its drawing modes brings it forward 
   await act(async () => workspace().onPanelDoubleTap('back'));
   expect(top()).toBe('back');
   expect(workspace().panelModes.back).toBe('draw');
-  await act(async () => workspace().onModeChange('front', 'edit'));
+  await act(async () => workspace().onModeChange('front', 'draw'));
   expect(top()).toBe('front');
-  expect(workspace().panelModes.front).toBe('edit');
+  expect(workspace().panelModes.front).toBe('draw');
 });
 
 test('unsaved work resumes directly and remains available after Library browsing', async () => {
@@ -977,4 +979,118 @@ test('New after a completed save does not ask to save the same work again', asyn
   await act(async () => renderer.root.findByType(Header).props.onNewStory());
   expect(Alert.alert).not.toHaveBeenCalled();
   expect(renderer.root.findByType(CanvasOrientationPicker).props.visible).toBe(true);
+});
+
+test('panel reference import, transforms and history preserve both panels and native ink', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2,1));
+  const original = renderer.root.findByType(Workspace).props.panels;
+  const id = original[0].id;
+  const geometry = (items: typeof original) => items.map((p: { id: string; x: number; y: number; width: number; height: number }) =>
+    ({ id: p.id,x: p.x,y: p.y,width: p.width,height: p.height })).sort((a: { id: string },b: { id: string }) => a.id.localeCompare(b.id));
+  await act(async () => renderer.root.findByType(Workspace).props.onModeChange(id,'draw'));
+  (storyLibrary.pickTracingImage as jest.Mock).mockResolvedValueOnce({ uri: 'data:image/png;base64,reference',width: 1600,height: 900 });
+  await act(async () => renderer.root.findByType(Workspace).props.onImportTracingImage(id));
+  const reference = renderer.root.findByType(Workspace).props.panels.find((p: { id: string }) => p.id === id).tracingImage;
+  expect(reference.opacity).toBe(0.35);
+  expect(reference.width).toBeLessThan(original[0].width);
+  expect(renderer.root.findByType(Workspace).props.panelModes[id]).toBe('draw');
+  expect(renderer.root.findByType(Workspace).props.editingTracingPanelId).toBeNull();
+  expect(renderer.root.findByType(Workspace).props.panels.find((p: { id: string }) => p.id !== id).tracingImage).toBeUndefined();
+  const moved = { ...reference,x: reference.x+20,rotation: 30,opacity: 0.65,visible: false };
+  await act(async () => renderer.root.findByType(Workspace).props.onTracingImageChange(id,moved));
+  expect(geometry(renderer.root.findByType(Workspace).props.panels)).toEqual(geometry(original));
+  expect(storyLibrary.saveDraft).toHaveBeenLastCalledWith(expect.objectContaining({ pages: expect.arrayContaining([
+    expect.objectContaining({ panels: expect.arrayContaining([expect.objectContaining({ id,tracingImage: moved })]) }),
+  ]) }));
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(renderer.root.findByType(Workspace).props.panels.find((p: { id: string }) => p.id === id).tracingImage).toEqual(reference);
+  await act(async () => renderer.root.findByType(Header).props.onRedo());
+  expect(renderer.root.findByType(Workspace).props.panels.find((p: { id: string }) => p.id === id).tracingImage).toEqual(moved);
+  await act(async () => renderer.root.findByType(Workspace).props.onTracingImageChange(id,undefined));
+  expect(renderer.root.findByType(Workspace).props.panels.find((p: { id: string }) => p.id === id).tracingImage).toBeUndefined();
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(renderer.root.findByType(Workspace).props.panels.find((p: { id: string }) => p.id === id).tracingImage).toEqual(moved);
+});
+
+test('panel import ignores invalid targets and cancelled or late selections do not alter another page', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
+  await act(async () => renderer.root.findByType(Workspace).props.onImportTracingImage('missing-panel'));
+  expect(storyLibrary.pickTracingImage).not.toHaveBeenCalled();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 30,y: 40,width: 200,height: 180 }));
+  const id = renderer.root.findByType(Workspace).props.panels[0].id;
+  (storyLibrary.pickTracingImage as jest.Mock).mockResolvedValueOnce(null);
+  await act(async () => renderer.root.findByType(Workspace).props.onImportTracingImage(id));
+  expect(renderer.root.findByType(Workspace).props.panels[0].tracingImage).toBeUndefined();
+  let finish!: (value: object) => void;
+  (storyLibrary.pickTracingImage as jest.Mock).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  let pending!: Promise<void>;
+  await act(async () => { pending = renderer.root.findByType(Workspace).props.onImportTracingImage(id); });
+  await act(async () => renderer.root.findByType(Header).props.onNextPage());
+  await act(async () => { finish({ uri: 'data:image/png;base64,late',width: 100,height: 100 }); await pending; });
+  expect(renderer.root.findByType(Workspace).props.panels).toEqual([]);
+  await act(async () => renderer.root.findByType(Header).props.onPrevPage());
+  expect(renderer.root.findByType(Workspace).props.panels[0].tracingImage).toBeUndefined();
+});
+
+test('reference history captures pending native ink so undo cannot erase the latest stroke', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 30,y: 40,width: 200,height: 180 }));
+  const id = renderer.root.findByType(Workspace).props.panels[0].id;
+  (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items.map((page: { panels: object[] }) => ({
+    ...page,panels: page.panels.map(panel => ({ ...panel,drawingData: 'latest-native-stroke' })),
+  })));
+  (storyLibrary.pickTracingImage as jest.Mock).mockResolvedValueOnce({ uri: 'data:image/png;base64,reference',width: 100,height: 100 });
+  await act(async () => renderer.root.findByType(Workspace).props.onImportTracingImage(id));
+  const reference = renderer.root.findByType(Workspace).props.panels[0].tracingImage;
+  await act(async () => renderer.root.findByType(Workspace).props.onTracingImageChange(id,{ ...reference,rotation: 30 }));
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(renderer.root.findByType(Workspace).props.panels[0].drawingData).toBe('latest-native-stroke');
+  expect(renderer.root.findByType(Workspace).props.panels[0].tracingImage.rotation).toBe(0);
+});
+
+test('opening, moving and closing image controls always keeps the panel in Draw mode', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book','editor'));
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 30,y: 40,width: 200,height: 180 }));
+  const workspace = () => renderer.root.findByType(Workspace).props;
+  const id = workspace().panels[0].id;
+  (storyLibrary.pickTracingImage as jest.Mock).mockResolvedValueOnce({ uri: 'data:image/png;base64,reference',width: 100,height: 100 });
+  await act(async () => workspace().onImportTracingImage(id));
+  const original = workspace().panels[0];
+  await act(async () => workspace().onTracingEditingChange(id,true));
+  expect(workspace().panelModes[id]).toBe('draw');
+  expect(workspace().editingTracingPanelId).toBe(id);
+  await act(async () => workspace().onTracingImageChange(id,{ ...original.tracingImage,x: 90,y: -20,rotation: 30 }));
+  expect(workspace().panelModes[id]).toBe('draw');
+  expect(workspace().panels[0]).toMatchObject({ x: original.x,y: original.y,width: original.width,height: original.height });
+  await act(async () => workspace().onTracingEditingChange(id,false));
+  expect(workspace().panelModes[id]).toBe('draw');
+  expect(workspace().editingTracingPanelId).toBeNull();
+});
+
+test('a photo loading failure preserves Draw mode and reports the loading error without claiming an unsupported format', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book','editor'));
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 30,y: 40,width: 200,height: 180 }));
+  const workspace = () => renderer.root.findByType(Workspace).props;
+  const panel = workspace().panels[0];
+  await act(async () => workspace().onModeChange(panel.id,'draw'));
+  (storyLibrary.pickTracingImage as jest.Mock).mockRejectedValueOnce(new Error('This photo could not be loaded. Please try selecting it again.'));
+  await act(async () => workspace().onImportTracingImage(panel.id));
+  expect(workspace().panelModes[panel.id]).toBe('draw');
+  expect(workspace().panels[0]).toEqual(panel);
+  expect(Alert.alert).toHaveBeenLastCalledWith('Could not import image','This photo could not be loaded. Please try selecting it again.');
+});
+
+
+test('native ink leases include current and Undo references without bridging legacy stroke payloads', async () => {
+  const document = [{ id: 'refs-page', bubbles: [], panels: [
+    { id: 'native', x: 0, y: 0, width: 100, height: 100, drawingData: 'craftoon-ink:before' },
+    { id: 'legacy', x: 100, y: 0, width: 100, height: 100, drawingData: 'legacy-base64-payload' },
+  ] }];
+  (storyLibrary.loadStory as jest.Mock).mockResolvedValueOnce({ id: 'refs-book', title: 'Refs', pages: document });
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('refs-book', 'editor'));
+  await act(async () => renderer.root.findByType(Workspace).props.onUpdatePanel('native', { drawingData: 'craftoon-ink:after' }));
+  const leases = (storyLibrary.retainInkReferences as jest.Mock).mock.calls.slice(-1)[0][0];
+  expect(leases).toEqual(expect.arrayContaining(['craftoon-ink:before', 'craftoon-ink:after']));
+  expect(leases).not.toContain('legacy-base64-payload');
 });

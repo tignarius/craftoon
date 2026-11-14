@@ -2,6 +2,7 @@ import Foundation
 import React
 import StoreKit
 import UIKit
+import PDFKit
 
 extension Notification.Name {
   static let craftoonProChanged = Notification.Name("CraftoonProChanged")
@@ -107,6 +108,55 @@ actor CraftoonPurchaseStore {
     result["outcome"] = "restored"
     return result
   }
+
+  func redeem() async throws -> [String: Any] {
+    startObserving()
+    try await Self.presentRedemption()
+    var result = await status()
+    result["outcome"] = "redeemed"
+    return result
+  }
+
+  @MainActor
+  private static func presentRedemption() async throws {
+    guard #available(iOS 16.3, *) else {
+      throw NSError(domain: "CraftoonPro", code: 4, userInfo: [NSLocalizedDescriptionKey:
+        "Please update to iPadOS 16.3 or later to enter an offer code."])
+    }
+    guard let presenter = RCTPresentedViewController(),
+          let scene = presenter.view.window?.windowScene,
+          scene.activationState == .foregroundActive else {
+      throw NSError(domain: "CraftoonPro", code: 5, userInfo: [NSLocalizedDescriptionKey:
+        "Could not open code entry. Please try again."])
+    }
+    // Verified transactions (including later deliveries) use the same observer
+    // and native entitlement checks as paid purchases.
+    try await AppStore.presentOfferCodeRedeemSheet(in: scene)
+  }
+}
+
+private final class CraftoonGuideController: UIViewController {
+  override func viewDidLoad() {
+    super.viewDidLoad()
+    title = "Craftoon Quick Guide"
+    view.backgroundColor = .systemBackground
+    navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done,
+      target: self, action: #selector(closeGuide))
+    let pdf = PDFView()
+    pdf.translatesAutoresizingMaskIntoConstraints = false
+    pdf.autoScales = true
+    if let url = Bundle.main.url(forResource: "craftoon-quick-guide", withExtension: "pdf") {
+      pdf.document = PDFDocument(url: url)
+    }
+    view.addSubview(pdf)
+    NSLayoutConstraint.activate([
+      pdf.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+      pdf.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+      pdf.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
+      pdf.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
+    ])
+  }
+  @objc private func closeGuide() { dismiss(animated: true) }
 }
 
 @objc(CraftoonPro)
@@ -142,6 +192,24 @@ class CraftoonPro: RCTEventEmitter {
     Task {
       do { resolve(try await CraftoonPurchaseStore.shared.restore()) }
       catch { reject("RESTORE_FAILED", error.localizedDescription, error) }
+    }
+  }
+  @objc func redeem(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    Task {
+      do { resolve(try await CraftoonPurchaseStore.shared.redeem()) }
+      catch { reject("REDEMPTION_FAILED", error.localizedDescription, error) }
+    }
+  }
+  @objc func showManual(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.main.async {
+      guard Bundle.main.url(forResource: "craftoon-quick-guide", withExtension: "pdf") != nil,
+            let presenter = RCTPresentedViewController(), !presenter.isBeingDismissed else {
+        reject("GUIDE_UNAVAILABLE", "Could not open the quick guide. Please try again.", nil)
+        return
+      }
+      let navigation = UINavigationController(rootViewController: CraftoonGuideController())
+      navigation.modalPresentationStyle = .fullScreen
+      presenter.present(navigation, animated: true) { resolve(nil) }
     }
   }
 }

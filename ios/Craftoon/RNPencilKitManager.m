@@ -6,6 +6,7 @@ RCT_EXPORT_VIEW_PROPERTY(isDrawingActive, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(drawingTool, NSString)
 RCT_EXPORT_VIEW_PROPERTY(panelId, NSString)
 RCT_EXPORT_VIEW_PROPERTY(drawingData, NSString)
+RCT_EXPORT_VIEW_PROPERTY(transparentBackground, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(onDrawingChange, RCTBubblingEventBlock)
 @end
 
@@ -16,6 +17,8 @@ RCT_EXPORT_VIEW_PROPERTY(onPageChange, RCTBubblingEventBlock)
 @end
 
 @interface RCT_EXTERN_MODULE(CraftoonLibrary, NSObject)
+RCT_EXTERN_METHOD(pickTracingImage:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(retainInkReferences:(NSArray *)references resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(saveDraft:(NSDictionary *)draft resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(loadDraft:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(setCanvasOrientation:(NSString *)orientation resolver:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
@@ -34,4 +37,6 @@ RCT_EXTERN_METHOD(loadStory:(NSString *)storyId resolver:(RCTPromiseResolveBlock
 RCT_EXTERN_METHOD(getStatus:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(purchase:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 RCT_EXTERN_METHOD(restore:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(redeem:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
+RCT_EXTERN_METHOD(showManual:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
 @end

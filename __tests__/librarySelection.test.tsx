@@ -251,3 +251,28 @@ test('Free can read and edit existing comics but cannot print or email them', as
   await act(async () => button('Edit Alpha').props.onPress({ stopPropagation: jest.fn() }));
   expect(onOpen).toHaveBeenCalledWith('alpha', 'editor');
 });
+
+
+test('clicking empty library space clears selection, actions and double-click timing', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1000);
+  await act(async () => button('Alpha').props.onPress());
+  expect(button('Alpha').props.accessibilityState.selected).toBe(true);
+  const background = renderer.root.findByProps({ testID: 'library-background' });
+  await act(async () => background.props.onPress());
+  expect(button('Alpha').props.accessibilityState.selected).toBe(false);
+  expect(button('Read Alpha')).toBeUndefined();
+  expect(button('Edit Alpha')).toBeUndefined();
+  expect(button('Delete Alpha')).toBeUndefined();
+  expect(button('Print selected comic').props.disabled).toBe(true);
+  clock.mockReturnValue(1100);
+  await act(async () => button('Alpha').props.onPress());
+  expect(button('Alpha').props.accessibilityState.selected).toBe(true);
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
+test('comic presses stop before the empty-space deselection handler', async () => {
+  const event = { stopPropagation: jest.fn() };
+  await act(async () => button('Alpha').props.onPress(event));
+  expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+  expect(button('Alpha').props.accessibilityState.selected).toBe(true);
+});

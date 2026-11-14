@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { CanvasPickerAnchor } from './CanvasOrientationPicker';
+import { CanvasPickerAnchor, measureCanvasPickerAnchor } from './CanvasOrientationPicker';
 import { AppText as Text } from './AppText';
 import { PageNavigator } from './PageNavigator';
 import { ScreenHeader } from './ScreenHeader';
@@ -65,8 +65,7 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const newButton = useRef<View>(null);
   const openNew = () => {
-    if (!newButton.current) { onNewStory(); return; }
-    newButton.current.measureInWindow((x, y, width, height) => onNewStory({ x, y, width, height }));
+    measureCanvasPickerAnchor(newButton, onNewStory);
   };
   return (
     <ScreenHeader mode={reading ? 'reader' : 'canvas'} pageCount={totalPages} onPrint={reading ? onPrint : undefined} printDisabled={emailing}

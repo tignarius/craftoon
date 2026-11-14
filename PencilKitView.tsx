@@ -8,6 +8,7 @@ interface PencilKitProps extends ViewProps {
   drawingTool?: 'pen' | 'lasso';
   panelId?: string;
   drawingData?: string;
+  transparentBackground?: boolean;
   onDrawingChange?: (event: { nativeEvent: { drawingData: string } }) => void;
 }
 
@@ -17,12 +18,14 @@ export const PencilKitView: React.FC<PencilKitProps> = ({
   drawingTool = 'pen',
   panelId,
   drawingData,
+  transparentBackground = false,
   onDrawingChange,
   ...props
 }) => {
   return (
     <RNPencilKit
-      style={[{ flex: 1, backgroundColor: '#ffffff' }, style]}
+      style={[{ flex: 1, backgroundColor: transparentBackground ? 'transparent' : '#ffffff' }, style]}
+      transparentBackground={transparentBackground}
       isDrawingActive={isDrawingActive}
       drawingTool={drawingTool}
       panelId={panelId}

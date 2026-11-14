@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { ModeInfoButton } from './components/ModeInfoButton';
-import { CanvasPickerAnchor } from './components/CanvasOrientationPicker';
+import { CanvasPickerAnchor, measureCanvasPickerAnchor } from './components/CanvasOrientationPicker';
 import {
   View,
   StyleSheet,
@@ -27,8 +27,7 @@ const StartMenuAction = ({ name, onPress, children }: {
 }) => {
     const anchorView = useRef<View>(null);
     const open = () => {
-        if (!anchorView.current) { onPress(); return; }
-        anchorView.current.measureInWindow((x, y, width, height) => onPress({ x, y, width, height }));
+        measureCanvasPickerAnchor(anchorView, onPress);
     };
     return <View ref={anchorView} collapsable={false} style={styles.menuAction}>
         <Pressable accessibilityRole="button" accessibilityLabel={name} onPress={open}

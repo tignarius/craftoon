@@ -1,8 +1,9 @@
 export type ToolType = 'panel' | 'pen' | 'bubble' | 'brush' | 'eraser' | 'select' | 'draw' | 'sticker';
 
-export type PanelMode = 'layout' | 'draw' | 'edit';
+export type PanelMode = 'layout' | 'draw';
 
 export interface ComicPanel {
+  tracingImage?: TracingImage;
   id: string;
   x: number;
   y: number;
@@ -11,7 +12,7 @@ export interface ComicPanel {
   borderWidth?: number;
   borderColor?: string;
   borderRadius?: number;
-  drawingData?: string; // 드로잉 base64 데이터 (페이지 전환 및 저장 시 유지)
+  drawingData?: string; // Native immutable ink reference; legacy Base64 remains readable.
 }
 
 export interface ComicBubble {
@@ -43,10 +44,26 @@ export interface ComicSticker {
 }
 
 export interface ComicPage {
+  // Legacy page reference, retained only until it can be migrated into panels.
+  tracingImage?: TracingImage;
   orientation?: 'portrait' | 'landscape';
   canvasSize?: { width: number; height: number };
   id: string;
   panels: ComicPanel[];
   bubbles: ComicBubble[];
   stickers?: ComicSticker[];
+}
+
+// Native photo files survive recovery, saving and restarts; legacy data URIs remain readable.
+// Coordinates are local to the panel's content; panel movement carries the image.
+export interface TracingImage {
+  imageRef?: string; // Persistent native photo identifier; uri is resolved on load.
+  uri: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  rotation: number;
+  opacity: number;
+  visible?: boolean;
 }

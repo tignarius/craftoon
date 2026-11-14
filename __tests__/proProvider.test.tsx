@@ -10,7 +10,7 @@ jest.mock('lucide-react-native', () => {
   return { Check: icon, Glasses: icon, LibraryBig: icon, Sparkles: icon, SquarePen: icon, X: icon };
 });
 jest.mock('../src/services/proAccess', () => ({ proAccess: {
-  getStatus: jest.fn(), purchase: jest.fn(), restore: jest.fn(), subscribe: jest.fn(() => () => {}),
+  getStatus: jest.fn(), purchase: jest.fn(), restore: jest.fn(), redeem: jest.fn(), showManual: jest.fn(), subscribe: jest.fn(() => () => {}),
 } }));
 const free = { isPro: false, canPurchase: true, displayPrice: 'CA$4.99', productId: 'com.craftoon.pro.unlock', appVersion: '1.0', developerName: 'Squareplayer' };
 let renderer: ReactTestRenderer.ReactTestRenderer;
@@ -31,14 +31,65 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => renderer.unmount()); });
 
-test('mode icon opens shared app information with developer, edition and usage', async () => {
+test('redemption only unlocks Pro after a verified entitlement, including later updates', async () => {
+  (proAccess.redeem as jest.Mock).mockResolvedValueOnce({ ...free, outcome: 'redeemed' });
+  await act(async () => button('Attempt save').props.onPress());
+  await act(async () => button('Enter activation code').props.onPress());
+  expect(proAccess.redeem).toHaveBeenCalledTimes(1);
+  expect(access()).toBe('free');
+  const listener = (proAccess.subscribe as jest.Mock).mock.calls[0][0];
+  await act(async () => listener({ ...free, isPro: true }));
+  expect(access()).toBe('pro');
+});
+
+test('redemption errors preserve Free access and show a useful message', async () => {
+  (proAccess.redeem as jest.Mock).mockRejectedValueOnce(new Error('Code entry unavailable. Please try again.'));
+  await act(async () => button('Attempt save').props.onPress());
+  await act(async () => button('Enter activation code').props.onPress());
+  expect(access()).toBe('free');
+  expect(renderer.root.findAllByType(Text).some(item => item.props.children === 'Code entry unavailable. Please try again.')).toBe(true);
+});
+
+test('the PDF guide is available to Free users without starting a purchase', async () => {
+  (proAccess.showManual as jest.Mock).mockResolvedValueOnce(undefined);
+  await act(async () => button('Attempt save').props.onPress());
+  await act(async () => button('Open quick guide PDF').props.onPress());
+  expect(proAccess.showManual).toHaveBeenCalledTimes(1);
+  expect(proAccess.purchase).not.toHaveBeenCalled();
+  expect(access()).toBe('free');
+});
+
+test('repeated redemption taps open one sheet and a stale result cannot revoke Pro', async () => {
+  let finish!: (value: object) => void;
+  (proAccess.redeem as jest.Mock).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  await act(async () => button('Attempt save').props.onPress());
+  const redeem = button('Enter activation code').props.onPress;
+  let pending!: Promise<void>;
+  await act(async () => { pending = redeem(); await redeem(); });
+  expect(proAccess.redeem).toHaveBeenCalledTimes(1);
+  const listener = (proAccess.subscribe as jest.Mock).mock.calls[0][0];
+  await act(async () => listener({ ...free, isPro: true }));
+  await act(async () => { finish({ ...free, outcome: 'redeemed' }); await pending; });
+  expect(access()).toBe('pro');
+});
+
+test('mode menu keeps essential actions and version without long feature explanations', async () => {
   const anchor = renderer.root.findByType(ModeInfoButton).findAllByType(View)[0].instance;
   anchor.measureInWindow = (callback: (x: number, y: number, width: number, height: number) => void) => callback(20, 30, 38, 38);
   await act(async () => button('About Canvas mode').props.onPress());
   const text = renderer.root.findAllByType(Text).map(item => item.props.children).flat().join(' ');
   expect(text).toContain('Squareplayer');
   expect(text).toContain('Free');
-  expect(text.replace(/\s+/g, ' ')).toContain('3 / 4');
+  expect(text).toContain('Version');
+  expect(text).toContain('1.0');
+  expect(text).toContain('Canvas mode');
+  expect(button('Open quick guide PDF')).toBeDefined();
+  expect(button('Enter activation code')).toBeDefined();
+  expect(button('Restore purchases')).toBeDefined();
+  expect(text).not.toContain('3 / 4');
+  expect(text).not.toContain('Automatic draft recovery');
+  expect(text).not.toContain('More pages for every story');
+  expect(text).not.toContain('Create panels, draw and arrange your story.');
   expect(text).toContain('CA$4.99');
 });
 

@@ -14,7 +14,7 @@ export function ModeInfoButton({ mode, pageCount }: { mode: AppMode; pageCount?:
   };
   return <View ref={anchor} collapsable={false}>
     <TouchableOpacity accessibilityRole="button" accessibilityLabel={`About ${details.title}`}
-      accessibilityHint="Current mode, developer information and Craftoon Pro"
+      accessibilityHint="Quick guide, activation code, current mode and Craftoon Pro"
       onPress={open} activeOpacity={0.7} style={[styles.button, { backgroundColor: details.tint, borderColor: details.color }]}>
       <Icon size={22} color={details.color} />
     </TouchableOpacity>

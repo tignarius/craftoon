@@ -17,7 +17,7 @@ The first button in Canvas, Library and Read identifies the current mode and ope
 
 ## App Store Connect setup still required for real sales
 
-1. Use the final app bundle identifier and create its app record in App Store Connect. The current project uses the development identifier `org.reactjs.native.example.Craftoon`; finalize it before creating the production app record.
+1. Use the final app bundle identifier and create its app record in App Store Connect. The app now uses the final identifier `com.squareplayer.craftoon` and targets iPad only. Register this identifier after enrolling in the Apple Developer Program.
 2. Create a **Non-Consumable** In-App Purchase with product ID **`com.craftoon.pro.unlock`** and name **Craftoon Pro**.
 3. Set Canada as the base region and **CAD 4.99** as the price. Add localized descriptions and the required review information.
 4. Complete the paid-app agreement, tax and banking setup, and submit the purchase with the app as required by App Store Connect.

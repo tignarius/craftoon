@@ -9,7 +9,7 @@ export interface ProStatus {
   developerName: string;
 }
 export interface PurchaseResult extends ProStatus {
-  outcome: 'purchased' | 'cancelled' | 'pending' | 'restored';
+  outcome: 'purchased' | 'cancelled' | 'pending' | 'restored' | 'redeemed';
 }
 
 const native = NativeModules.CraftoonPro;
@@ -22,6 +22,10 @@ export const proAccess = {
     : Promise.reject(new Error('Purchases are currently unavailable. Please try again later.')),
   restore: (): Promise<PurchaseResult> => native ? native.restore()
     : Promise.reject(new Error('Purchases are currently unavailable. Please try again later.')),
+  redeem: (): Promise<PurchaseResult> => native?.redeem ? native.redeem()
+    : Promise.reject(new Error('Code redemption is available in the iPad app.')),
+  showManual: (): Promise<void> => native?.showManual ? native.showManual()
+    : Promise.reject(new Error('The quick guide is available in the iPad app.')),
   subscribe: (listener: (status: ProStatus) => void) => {
     if (!native) { return () => {}; }
     const subscription = new NativeEventEmitter(native).addListener('CraftoonProChanged', listener);

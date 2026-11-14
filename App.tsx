@@ -19,17 +19,20 @@ import { CanvasOrientationPicker, CanvasPickerAnchor } from './src/components/Ca
 import { canvasSizeFor, CanvasOrientation, pageCanvasSize, pageOrientation } from './src/utils/canvasFormat';
 import { lockCanvasOrientation } from './src/services/canvasOrientation';
 import { sameComicPages } from './src/utils/comicContent';
+import { boundHistory } from './src/utils/historyBudget';
 import { SaveComicDialog } from './src/components/SaveComicDialog';
 import { Header } from './src/components/Header';
 import { Workspace } from './src/components/Workspace';
 import { CanvasPageNavigation } from './src/components/CanvasPageNavigation';
 import { createPanelGrid } from './src/utils/panelGrid';
+import { fitTracingImage, migrateTracingPage, legacyPanelReference } from './src/utils/tracingImage';
 import {
   ComicPage,
   ComicPanel,
   ComicBubble,
   PanelMode,
   ToolType,
+  TracingImage,
 } from './src/types/comic';
 
 function CraftoonApp(): React.JSX.Element {
@@ -62,6 +65,14 @@ function CraftoonApp(): React.JSX.Element {
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
 
   const currentPage = pages[currentPageIndex] || pages[0];
+  const latestPages = useRef(pages);
+  latestPages.current = pages;
+  const activePageId = useRef(currentPage.id);
+  activePageId.current = currentPage.id;
+  const [editingTracingPanelId, setEditingTracingPanelId] = useState<string | null>(null);
+  const [importingTracingImage, setImportingTracingImage] = useState(false);
+  const importingTracingRef = useRef(false);
+  useEffect(() => { setEditingTracingPanelId(null); }, [currentPage.id, currentScreen, infoOpen]);
   const canvasBoundsRef = useRef({ width: 900, height: 1200 });
   const handleSheetBoundsChange = useCallback((bounds: { width: number; height: number }) => {
     canvasBoundsRef.current = bounds;
@@ -104,6 +115,26 @@ function CraftoonApp(): React.JSX.Element {
   };
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [historyStep, setHistoryStep] = useState(-1);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('memoryWarning', () => {
+      const retained = history.slice(Math.max(0, historyStep - 1), historyStep + 1);
+      setHistory(retained);
+      setHistoryStep(retained.length - 1);
+    });
+    return () => subscription.remove();
+  }, [history, historyStep]);
+  useEffect(() => {
+    if (!storyLibrary.retainInkReferences) { return; }
+    const retained = new Set<string>();
+    for (const items of [pages, ...history.map(entry => entry.pages)]) {
+      for (const page of items) {
+        for (const panel of page.panels) {
+          if (panel.drawingData?.startsWith('craftoon-ink:')) { retained.add(panel.drawingData); }
+        }
+      }
+    }
+    storyLibrary.retainInkReferences([...retained]).catch(() => { /* Keep ink if cleanup cannot run. */ });
+  }, [pages, history]);
   const snapshot = (items = pages, pageIndex = currentPageIndex): Snapshot => ({
     pages: items, pageIndex, storyId, title: storyTitle, saved: hasSavedStoryRef.current,
   });
@@ -111,13 +142,13 @@ function CraftoonApp(): React.JSX.Element {
     const past = historyStep < 0 ? [previous] : history.slice(0, historyStep + 1);
     // Refresh the current entry with captured ink and the latest viewport.
     past[past.length - 1] = previous;
-    const updated = [...past, next].slice(-100);
+    const updated = boundHistory([...past, next]);
     setHistory(updated);
     setHistoryStep(updated.length - 1);
     editRevisionRef.current += 1;
   };
-  const changePages = (items: ComicPage[], pageIndex = currentPageIndex) => {
-    recordChange(snapshot(items, pageIndex));
+  const changePages = (items: ComicPage[], pageIndex = currentPageIndex, previousPages = pages) => {
+    recordChange(snapshot(items, pageIndex), snapshot(previousPages));
     setPages(items);
     setCurrentPageIndex(pageIndex);
   };
@@ -147,7 +178,7 @@ function CraftoonApp(): React.JSX.Element {
         savedRevisionRef.current = 0;
         setStoryId(draft.id);
         setStoryTitle(draft.title || 'Untitled comic');
-        setPages(draft.pages);
+        setPages(draft.pages.map(migrateTracingPage));
         setCurrentPageIndex(Number.isInteger(draft.pageIndex)
           ? Math.max(0, Math.min(draft.pageIndex, draft.pages.length - 1)) : 0);
         setHistory([]);
@@ -325,13 +356,14 @@ function CraftoonApp(): React.JSX.Element {
         setPreviewPageIndex(0);
       } else {
         const pageIndex = previewStory?.id === id ? previewPageIndex : 0;
+        await storyLibrary.restorePages(story.pages);
         hasCanvasSessionRef.current = true;
         hasSavedStoryRef.current = true;
         editRevisionRef.current = 0;
         savedRevisionRef.current = 0;
         setStoryId(story.id);
         setStoryTitle(story.title);
-        setPages(story.pages);
+        setPages(story.pages.map(migrateTracingPage));
         setCurrentPageIndex(pageIndex);
         setHistory([]);
         setHistoryStep(-1);
@@ -360,7 +392,7 @@ function CraftoonApp(): React.JSX.Element {
 
   const setPanelsWithHistory = (newPanels: ComicPanel[]) => {
     changePages(pages.map((page, index) => index === currentPageIndex
-      ? { ...page, panels: newPanels } : page));
+      ? migrateTracingPage({ ...page, panels: newPanels }) : page));
   };
 
   const restoreHistory = async (step: number) => {
@@ -387,12 +419,59 @@ function CraftoonApp(): React.JSX.Element {
   const handleUndo = () => restoreHistory(historyStep - 1);
   const handleRedo = () => restoreHistory(historyStep + 1);
 
+  const handleImportTracingImage = async (panelId: string) => {
+    if (!currentPage.panels.some(panel => panel.id === panelId) || importingTracingRef.current || savingRef.current) { return; }
+    importingTracingRef.current = true;
+    setImportingTracingImage(true);
+    const targetId = currentPage.id;
+    try {
+      const picked = await storyLibrary.pickTracingImage();
+      if (!picked || targetId !== activePageId.current) { return; }
+      const captured = await storyLibrary.capturePages(latestPages.current);
+      if (targetId !== activePageId.current) { return; }
+      if (!captured.find(page => page.id === targetId)?.panels.some(panel => panel.id === panelId)) { return; }
+      changePages(captured.map(page => page.id === targetId ? {
+        ...page, panels: page.panels.map(panel => panel.id === panelId ? {
+          ...panel, tracingImage: fitTracingImage(picked, { width: Math.max(1, panel.width - 4), height: Math.max(1, panel.height - 4) }),
+        } : panel),
+      } : page), currentPageIndex, captured);
+      setPanelModes({ [panelId]: 'draw' });
+      setEditingTracingPanelId(null);
+    } catch (error) {
+      Alert.alert('Could not import image', error instanceof Error
+        ? error.message : 'This photo could not be loaded. Please try selecting it again.');
+    } finally { importingTracingRef.current = false; setImportingTracingImage(false); }
+  };
+  const handleTracingImageChange = async (panelId: string, tracingImage: TracingImage | undefined) => {
+    if (savingRef.current) { return; }
+    savingRef.current = true;
+    const targetId = currentPage.id;
+    try {
+      // Capture native ink before recording history, including strokes whose
+      // drawing-change callback has not reached JavaScript yet.
+      const captured = await storyLibrary.capturePages(latestPages.current);
+      if (targetId !== activePageId.current) { return; }
+      if (!captured.find(page => page.id === targetId)?.panels.some(panel => panel.id === panelId)) { return; }
+      changePages(captured.map(page => page.id === targetId ? { ...page,
+        panels: page.panels.map(panel => panel.id === panelId ? { ...panel, tracingImage } : panel),
+      } : page), currentPageIndex, captured);
+      if (!tracingImage) { setEditingTracingPanelId(null); }
+    } catch {
+      Alert.alert('Could not update reference image', 'Your drawing is preserved. Please try again.');
+    } finally { savingRef.current = false; }
+  };
+  const handleTracingEditingChange = (panelId: string, editing: boolean) => {
+    setPanelModes({ [panelId]: 'draw' });
+    setEditingTracingPanelId(editing ? panelId : null);
+  };
+
   // 사용자가 드래그해서 칸을 그렸을 때 패널 추가
   const handleAddPanel = (rect: { x: number; y: number; width: number; height: number }) => {
     const newPanel: ComicPanel = {
       id: `panel-${Date.now()}`,
       ...rect,
     };
+    newPanel.tracingImage = legacyPanelReference(currentPage, newPanel);
     setPanelsWithHistory([...currentPage.panels, newPanel]);
     // 박스를 생성하면 레이아웃 모드를 유지하여 크기/위치 조절 가능
     setPanelModes({ [newPanel.id]: 'layout' });
@@ -443,22 +522,26 @@ function CraftoonApp(): React.JSX.Element {
   };
 
   const handlePanelModeChange = (id: string, mode: PanelMode) => {
+    setEditingTracingPanelId(null);
     bringPanelToFront(id);
     setPanelModes({ [id]: mode });
   };
 
   // 다른 박스를 클릭해도 일단 레이아웃 모드가 먼저 작동!
   const handlePanelSelect = (id: string) => {
+    setEditingTracingPanelId(null);
     bringPanelToFront(id);
     setPanelModes({ [id]: 'layout' });
   };
 
   const handleBackgroundTap = () => {
+    setEditingTracingPanelId(null);
     setPanelModes({});
   };
 
   // 박스 자체를 다시 클릭하거나 더블클릭하면 드로우 모드로 전환!
   const handlePanelDoubleTap = (id: string) => {
+    setEditingTracingPanelId(null);
     bringPanelToFront(id);
     setPanelModes({ [id]: 'draw' });
   };
@@ -543,6 +626,7 @@ function CraftoonApp(): React.JSX.Element {
     savingRef.current = true;
     try {
       const captured = await storyLibrary.capturePages(pages);
+      formatAnchorRef.current = undefined;
       setFormatPicker(null);
       if (formatPicker === 'reset') {
         const nextPages = captured.map(page => ({ ...page, orientation, canvasSize: canvasSizeFor(orientation) }));
@@ -649,7 +733,7 @@ function CraftoonApp(): React.JSX.Element {
 
   const wrap = (content: React.ReactNode) => <View style={styles.workspaceWrapper}>
     {content}
-    <CanvasOrientationPicker anchor={formatAnchorRef.current} visible={formatPicker !== null} onSelect={selectFormat} onCancel={() => setFormatPicker(null)} />
+    <CanvasOrientationPicker anchor={formatAnchorRef.current} visible={formatPicker !== null} onSelect={selectFormat} onCancel={() => { formatAnchorRef.current = undefined; setFormatPicker(null); }} />
   </View>;
 
   const handleEmail = async () => {
@@ -730,6 +814,11 @@ function CraftoonApp(): React.JSX.Element {
             <ComicReader key={pageOrientation(displayedPages[displayedPageIndex])} pages={displayedPages} pageIndex={displayedPageIndex}
               onPageChange={readingPreview ? setPreviewPageIndex : setCurrentPageIndex} />
           ) : <Workspace
+            onImportTracingImage={handleImportTracingImage}
+            importingTracingImage={importingTracingImage}
+            editingTracingPanelId={editingTracingPanelId}
+            onTracingImageChange={handleTracingImageChange}
+            onTracingEditingChange={handleTracingEditingChange}
             canvasSize={pageCanvasSize(currentPage)}
             onSheetBoundsChange={handleSheetBoundsChange}
             panels={currentPage.panels}

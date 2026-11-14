@@ -26,6 +26,8 @@ export interface CanvasDraft extends SavedStory {
 }
 
 interface StoryLibraryModule {
+  retainInkReferences?(references: string[]): Promise<void>;
+  pickTracingImage(): Promise<{ uri: string; imageRef?: string; width: number; height: number } | null>;
   saveDraft(draft: CanvasDraft): Promise<void>;
   loadDraft(): Promise<CanvasDraft | null>;
   capturePages(pages: ComicPage[]): Promise<ComicPage[]>;

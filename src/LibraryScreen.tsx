@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Pressable,
   StatusBar,
   StyleSheet,
   TouchableOpacity,
@@ -75,6 +76,12 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
     }
     lastCardPressRef.current = { id, time };
     setSelectedId(current => current === id ? null : id);
+  };
+
+  const clearSelection = () => {
+    if (busyRef.current) { return; }
+    lastCardPressRef.current = null;
+    setSelectedId(null);
   };
 
   const remove = async (story: StorySummary) => {
@@ -153,6 +160,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
           <SquarePen size={22} color={iconColors.canvas} />
         </TouchableOpacity>
       </ScreenHeader>
+      <Pressable testID="library-background" accessible={false} style={styles.libraryBody} onPress={clearSelection}>
       {loading ? <ActivityIndicator style={styles.center} color="#0D9488" /> : error ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Could not open your library</Text>
@@ -193,13 +201,33 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
               }}
               style={[styles.card, { width: cardWidth }, selectedId === item.id && styles.cardSelected]}
               disabled={openingId !== null || deletingId !== null || printing || emailing}
-              onPress={() => select(item.id)}
+              onPress={event => { event?.stopPropagation(); select(item.id); }}
             >
               <View testID={`comic-cover-${item.id}`} style={[styles.thumbnailFrame, { aspectRatio: coverAspectRatio(item) }]}>
                 {item.thumbnailData ? (
-                  <Image source={{ uri: item.thumbnailData }} style={styles.thumbnail}
-                    resizeMode="contain" accessibilityLabel={`${item.title} preview`} />
+                  <Image source={{ uri: item.thumbnailData }} style={[styles.thumbnail, selectedId === item.id && styles.thumbnailSelected]}
+                    blurRadius={selectedId === item.id ? 2 : 0} resizeMode="contain" accessibilityLabel={`${item.title} preview`} />
                 ) : <BookOpen size={36} color="#94A3B8" />}
+                {selectedId === item.id && (
+                  <View style={styles.cardActions}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${item.title}`}
+                    style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
+                    onPress={event => { event.stopPropagation(); open(item.id, 'editor'); }}>
+                    <SquarePen size={22} color={iconColors.canvas} />
+                  </TouchableOpacity>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Read ${item.title}`}
+                    style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
+                    onPress={event => { event.stopPropagation(); open(item.id, 'reader'); }}>
+                    <Glasses size={22} color={iconColors.read} />
+                  </TouchableOpacity>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Delete ${item.title}`}
+                    style={styles.deleteButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
+                    onPress={event => { event.stopPropagation(); remove(item); }}>
+                    {deletingId === item.id ? <ActivityIndicator size="small" color="#DC2626" /> :
+                      <Trash2 size={22} color={iconColors.delete} />}
+                  </TouchableOpacity>
+                  </View>
+                )}
                 {openingId === item.id && (
                   <View style={styles.loadingOverlay}><ActivityIndicator color="#0D9488" /></View>
                 )}
@@ -210,30 +238,11 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
                   {item.pageCount} {item.pageCount === 1 ? 'page' : 'pages'} · {new Date(item.updatedAt).toLocaleDateString()}
                 </Text>
               </View>
-              {selectedId === item.id && (
-                <View style={styles.cardActions}>
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Edit ${item.title}`}
-                  style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
-                  onPress={event => { event.stopPropagation(); open(item.id, 'editor'); }}>
-                  <SquarePen size={22} color={iconColors.canvas} />
-                </TouchableOpacity>
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Read ${item.title}`}
-                  style={styles.modeButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
-                  onPress={event => { event.stopPropagation(); open(item.id, 'reader'); }}>
-                  <Glasses size={22} color={iconColors.read} />
-                </TouchableOpacity>
-                <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Delete ${item.title}`}
-                  style={styles.deleteButton} disabled={openingId !== null || deletingId !== null || printing || emailing}
-                  onPress={event => { event.stopPropagation(); remove(item); }}>
-                  {deletingId === item.id ? <ActivityIndicator size="small" color="#DC2626" /> :
-                    <Trash2 size={22} color={iconColors.delete} />}
-                </TouchableOpacity>
-                </View>
-              )}
             </TouchableOpacity>
           )}
         />
       )}
+      </Pressable>
       {deleted && (
         <View style={styles.undoBar} accessibilityLiveRegion="polite">
           <Text numberOfLines={1} style={styles.undoMessage}>Comic deleted</Text>
@@ -249,6 +258,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F1F5F9' },
+  libraryBody: { flex: 1 },
   gallery: { padding: 16, paddingBottom: 100, gap: 20 },
   galleryRow: { gap: 16 },
   emptyList: { flexGrow: 1 },
@@ -260,8 +270,8 @@ const styles = StyleSheet.create({
   card: { padding: 10, borderRadius: 14, backgroundColor: '#FFFFFF',
     borderWidth: 2, borderColor: '#E2E8F0', alignSelf: 'flex-start' },
   cardSelected: { borderColor: '#0D9488', backgroundColor: '#F0FDFA' },
-  cardActions: { flexDirection: 'row', justifyContent: 'space-evenly', gap: 6,
-    paddingTop: 10, marginTop: 6, borderTopWidth: 1, borderTopColor: '#CCFBF1' },
+  cardActions: { ...StyleSheet.absoluteFillObject, flexDirection: 'row',
+    alignItems: 'center', justifyContent: 'center', gap: 8, backgroundColor: 'rgba(255, 255, 255, 0.3)' },
   modeButton: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#FFFFFF',
     alignItems: 'center', justifyContent: 'center' },
   deleteButton: { width: 44, height: 44, borderRadius: 12, backgroundColor: '#FFF1F2',
@@ -269,6 +279,7 @@ const styles = StyleSheet.create({
   thumbnailFrame: { width: '100%', borderRadius: 6, overflow: 'hidden',
     borderWidth: 1, borderColor: '#EDF2F7', backgroundColor: '#FFFFFF', alignItems: 'center', justifyContent: 'center' },
   thumbnail: { width: '100%', height: '100%' },
+  thumbnailSelected: { opacity: 0.55 },
   loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(255, 255, 255, 0.75)',
     alignItems: 'center', justifyContent: 'center' },
   storyDetails: { paddingHorizontal: 4, paddingTop: 12, paddingBottom: 6 },

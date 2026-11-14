@@ -7,6 +7,35 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   // Keep the latest native drawing when a panel unmounts during page navigation.
   static var drawingCache: [String: PKDrawing] = [:]
+  private static let views = NSHashTable<RNPencilKitView>.weakObjects()
+  private static let memoryObserver = NotificationCenter.default.addObserver(
+    forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
+  ) { _ in
+    for view in views.allObjects {
+      view.liveCanvas?.undoManager?.levelsOfUndo = 5
+      if !view.isDrawingActive { view.schedulePreview() }
+    }
+  }
+
+  static func prepareForCapture() {
+    for view in views.allObjects where view.window != nil && CraftoonInkStore.documentPanelIDs?.contains(view.panelId) != false {
+      view.scaleInkIfNeeded()
+    }
+  }
+
+  static func restoreVisibleDrawings() {
+    for view in views.allObjects where CraftoonInkStore.documentPanelIDs?.contains(view.panelId) == true {
+      view.liveCanvas?.undoManager?.removeAllActions()
+      let value = CraftoonInkStore.latestReferences[view.panelId] ?? ""
+      if view.liveCanvas == nil, !view.isDrawingActive {
+        view.previewKey = nil
+        view.inkSize = view.bounds.size
+        view.schedulePreview()
+      } else {
+        view.applyDrawing(CraftoonInkStore.drawing(value) ?? PKDrawing(), reference: value.isEmpty ? nil : value)
+      }
+    }
+  }
 
   private static var sharedToolPicker: PKToolPicker? = {
     if #available(iOS 14.0, *) {
@@ -18,7 +47,42 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     return nil
   }()
 
-  lazy var canvasView: PKCanvasView = {
+  private var liveCanvas: PKCanvasView?
+  private let previewView = UIImageView()
+  private weak var canvasAwaitingRender: PKCanvasView?
+  private var detachWork: DispatchWorkItem?
+  private var previewRevision = 0
+  private var previewKey: String?
+  private var previewTimer: Timer?
+  private var inkSize: CGSize = .zero
+  private var syncing = false
+  private static let previewQueue = DispatchQueue(label: "com.craftoon.ink-preview", qos: .userInitiated)
+
+  var canvasView: PKCanvasView {
+    if let canvas = liveCanvas { return canvas }
+    let canvas = makeCanvas()
+    liveCanvas = canvas
+    canvas.frame = bounds
+    canvas.contentSize = bounds.size
+    addSubview(canvas)
+    // A new PencilKit renderer initially has no visible tiles. Keep the last
+    // preview above it until its first completed render has been presented.
+    canvasAwaitingRender = canvas
+    previewView.isHidden = false
+    bringSubviewToFront(previewView)
+    installPointerInput()
+    let drawing = RNPencilKitView.drawingCache[panelId]
+      ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData)
+      ?? PKDrawing()
+    isApplyingDrawing = true
+    canvas.drawing = drawing
+    isApplyingDrawing = false
+    RNPencilKitView.drawingCache[panelId] = drawing
+    if inkSize == .zero { inkSize = bounds.size }
+    return canvas
+  }
+
+  private func makeCanvas() -> PKCanvasView {
     let canvas = PKCanvasView()
     canvas.drawingPolicy = .anyInput
     canvas.backgroundColor = .white
@@ -36,11 +100,12 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
     canvas.delaysContentTouches = false
     canvas.tool = defaultInkTool()
+    canvas.undoManager?.levelsOfUndo = 20
     // Ink must remain visible on the white page, including in system dark mode.
     canvas.overrideUserInterfaceStyle = .light
 
     return canvas
-  }()
+  }
 
   @objc var panelId: String = "" {
     didSet {
@@ -58,30 +123,40 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
       // can erase a newer stroke and restart PencilKit's live renderer.
       guard drawingData != oldValue,
             drawingData != lastEmittedDrawingData else { return }
-      let drawing: PKDrawing
-      if drawingData.isEmpty {
-        drawing = PKDrawing()
-      } else {
-        guard let data = Data(base64Encoded: drawingData),
-              let decoded = try? PKDrawing(data: data) else { return }
-        drawing = decoded
+      if !isDrawingActive, liveCanvas == nil {
+        if !panelId.isEmpty { CraftoonInkStore.latestReferences[panelId] = drawingData.isEmpty ? nil : drawingData }
+        inkSize = bounds.size
+        previewKey = nil
+        schedulePreview()
+        return
       }
-      applyDrawing(drawing)
+      let decoded = CraftoonInkStore.drawing(drawingData)
+      guard drawingData.isEmpty || decoded != nil else { return }
+      let drawing = decoded ?? PKDrawing()
+      applyDrawing(drawing, reference: drawingData.isEmpty ? nil : drawingData)
     }
   }
 
   @objc var onDrawingChange: RCTBubblingEventBlock?
 
+  @objc var transparentBackground: Bool = false {
+    didSet {
+      guard transparentBackground != oldValue else { return }
+      backgroundColor = transparentBackground ? .clear : .white
+      isOpaque = !transparentBackground
+      liveCanvas?.backgroundColor = transparentBackground ? .clear : .white
+      liveCanvas?.isOpaque = !transparentBackground
+    }
+  }
+
   @objc var isDrawingActive: Bool = false {
     didSet {
-      updateDrawingState()
+      if isDrawingActive != oldValue { updateDrawingState() }
     }
   }
 
   @objc var drawingTool: String = "pen" {
-    didSet {
-      updateDrawingState()
-    }
+    didSet { if drawingTool != oldValue { updateDrawingState() } }
   }
 
   private var lastBoundsSize: CGSize = .zero
@@ -99,8 +174,11 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   private func setupView() {
     backgroundColor = .white
     clipsToBounds = true
-    addSubview(canvasView)
-    installPointerInput()
+    Self.views.add(self)
+    _ = Self.memoryObserver
+    previewView.isUserInteractionEnabled = false
+    previewView.contentMode = .scaleToFill
+    addSubview(previewView)
   }
 
   // Simulator mouse events arrive as direct touches. On an iPad, only pointer
@@ -242,9 +320,21 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   }
 
   func canvasViewDidFinishRendering(_ canvasView: PKCanvasView) {
-    // Keep the preview until the committed ink is visible, avoiding a blank frame.
-    committedPreviews.forEach { $0.removeFromSuperview() }
-    committedPreviews.removeAll()
+    guard canvasView === liveCanvas else { return }
+    let renderedPreviews = committedPreviews
+    // Defer the handoff to the next main turn so the newly rendered tiles and
+    // overlay removal reach the compositor together. Ignore retired renderers.
+    DispatchQueue.main.async { [weak self, weak canvasView] in
+      guard let self, let canvasView, canvasView === self.liveCanvas else { return }
+      UIView.performWithoutAnimation {
+        renderedPreviews.forEach { $0.removeFromSuperview() }
+        self.committedPreviews.removeAll { preview in renderedPreviews.contains { $0 === preview } }
+        if self.canvasAwaitingRender === canvasView, self.window != nil {
+          self.canvasAwaitingRender = nil
+          self.previewView.isHidden = true
+        }
+      }
+    }
   }
 
   private var syncTimer: Timer?
@@ -257,51 +347,76 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   deinit {
     pointerDisplayLink?.invalidate()
     syncTimer?.invalidate()
-    RNPencilKitView.sharedToolPicker?.removeObserver(canvasView)
+    previewTimer?.invalidate()
+    detachWork?.cancel()
+    if let canvas = liveCanvas { RNPencilKitView.sharedToolPicker?.removeObserver(canvas) }
+    // Preserve a stroke even if React unmounts this panel before the sync event.
+    if let drawing = liveCanvas?.drawing, !panelId.isEmpty,
+       CraftoonInkStore.documentPanelIDs?.contains(panelId) != false {
+      RNPencilKitView.drawingCache[panelId] = drawing
+      let capture = CraftoonInkStore.capture([["panels": [["id": panelId]]]])
+      let id = panelId
+      let reference = CraftoonInkStore.latestReferences[id]
+      CraftoonInkStore.queue.async {
+        do {
+          try CraftoonInkStore.persist(capture.drawings)
+          DispatchQueue.main.async {
+            if CraftoonInkStore.latestReferences[id] == reference { RNPencilKitView.drawingCache.removeValue(forKey: id) }
+          }
+        } catch { NSLog("Ink checkpoint failed: %@", error.localizedDescription) }
+      }
+    }
   }
 
-  private func applyDrawing(_ drawing: PKDrawing) {
+  private func applyDrawing(_ drawing: PKDrawing, reference: String? = nil) {
     syncTimer?.invalidate()
     drawingRevision += 1
     isApplyingDrawing = true
-    canvasView.drawing = drawing
+    liveCanvas?.drawing = drawing
     isApplyingDrawing = false
+    inkSize = bounds.size
     if !panelId.isEmpty {
       RNPencilKitView.drawingCache[panelId] = drawing
+      CraftoonInkStore.latestReferences[panelId] = reference
     }
+    if !isDrawingActive { schedulePreview() }
   }
 
   private func loadDrawing() {
-    if let cached = RNPencilKitView.drawingCache[panelId] {
-      applyDrawing(cached)
-    } else if let data = Data(base64Encoded: drawingData),
-              let drawing = try? PKDrawing(data: data) {
-      // React may supply drawingData before panelId during mounting.
-      applyDrawing(drawing)
-    } else {
-      applyDrawing(PKDrawing())
+    let reference = CraftoonInkStore.latestReferences[panelId] ?? drawingData
+    if !isDrawingActive, liveCanvas == nil {
+      inkSize = bounds.size
+      schedulePreview()
+      return
     }
+    let drawing = RNPencilKitView.drawingCache[panelId] ?? CraftoonInkStore.drawing(reference) ?? PKDrawing()
+    applyDrawing(drawing, reference: reference.isEmpty ? nil : reference)
   }
 
   func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
+    guard canvasView === liveCanvas else { return }
     isUsingTool = true
     drawingRevision += 1
     syncTimer?.invalidate()
   }
 
   func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
+    guard canvasView === liveCanvas else { return }
     isUsingTool = false
     CraftoonDraftRecovery.shared.flush()
     scheduleDrawingSync()
   }
 
   func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
+    guard canvasView === liveCanvas else { return }
     guard !isApplyingDrawing else { return }
     drawingRevision += 1
     if !panelId.isEmpty {
       RNPencilKitView.drawingCache[panelId] = canvasView.drawing
+      CraftoonInkStore.latestReferences.removeValue(forKey: panelId)
     }
     CraftoonDraftRecovery.shared.scheduleSave()
+    if !isDrawingActive { schedulePreview() }
     // Final pressure updates can arrive after didEndUsingTool.
     if !isUsingTool {
       scheduleDrawingSync()
@@ -310,20 +425,28 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   private func scheduleDrawingSync() {
     syncTimer?.invalidate()
-    let timer = Timer(timeInterval: 0.2, repeats: false) { [weak self] _ in
-      guard let self = self, !self.isUsingTool,
-            self.onDrawingChange != nil else { return }
-      let drawing = self.canvasView.drawing
+    let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
+      guard let self, !self.isUsingTool, !self.syncing,
+            self.onDrawingChange != nil, !self.panelId.isEmpty else { return }
       let revision = self.drawingRevision
       let panelId = self.panelId
-      DispatchQueue.global(qos: .utility).async { [weak self] in
-        let data = drawing.dataRepresentation().base64EncodedString()
+      let capture = CraftoonInkStore.capture([["panels": [["id": panelId]]]])
+      guard let reference = (capture.pages.first?["panels"] as? [[String: Any]])?.first?["drawingData"] as? String,
+            reference != self.lastEmittedDrawingData else { return }
+      self.syncing = true
+      CraftoonInkStore.queue.async { [weak self] in
+        let result = Result { try CraftoonInkStore.persist(capture.drawings) }
         DispatchQueue.main.async { [weak self] in
-          guard let self = self, !self.isUsingTool,
-                self.panelId == panelId,
-                self.drawingRevision == revision else { return }
-          self.lastEmittedDrawingData = data
-          self.onDrawingChange?(["drawingData": data])
+          guard let self else { return }
+          self.syncing = false
+          guard self.panelId == panelId else { return }
+          guard !self.isUsingTool, self.drawingRevision == revision else {
+            if !self.isUsingTool { self.scheduleDrawingSync() }
+            return
+          }
+          if case .failure(let error) = result { NSLog("Ink sync failed: %@", error.localizedDescription); return }
+          self.lastEmittedDrawingData = reference
+          self.onDrawingChange?(["drawingData": reference])
         }
       }
     }
@@ -331,38 +454,158 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     syncTimer = timer
   }
 
+  private func scaleInkIfNeeded() {
+    let size = bounds.size
+    guard size.width > 0, size.height > 0 else { return }
+    guard inkSize.width > 0, inkSize.height > 0, inkSize != size else { inkSize = size; return }
+    let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
+      ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
+    let scaled = drawing.transformed(using: CGAffineTransform(scaleX: size.width / inkSize.width, y: size.height / inkSize.height))
+    applyDrawing(scaled)
+    scheduleDrawingSync()
+    CraftoonDraftRecovery.shared.scheduleSave()
+  }
+
+  private func schedulePreview() {
+    previewRevision += 1
+    previewTimer?.invalidate()
+    guard !isDrawingActive, window != nil, bounds.width > 0, bounds.height > 0 else { return }
+    let timer = Timer(timeInterval: 0.15, repeats: false) { [weak self] _ in self?.refreshPreview() }
+    previewTimer = timer
+    RunLoop.main.add(timer, forMode: .common)
+  }
+
+  private func refreshPreview() {
+    guard !isDrawingActive, !panelId.isEmpty, window != nil else { return }
+    scaleInkIfNeeded()
+    // applyDrawing schedules another preview when a resize was committed.
+    previewTimer?.invalidate()
+    let capture = CraftoonInkStore.capture([["panels": [["id": panelId]]]])
+    let reference = (capture.pages.first?["panels"] as? [[String: Any]])?.first?["drawingData"] as? String ?? ""
+    let rect = CGRect(origin: .zero, size: bounds.size)
+    let key = reference + "-\(rect.size)"
+    if previewKey == key {
+      // No ink changed since this preview. It is safe to reuse it, but the
+      // inactive live renderer must still be released after becoming visible.
+      UIView.performWithoutAnimation {
+        previewView.isHidden = false
+        releaseCanvas()
+      }
+      persistPreview(capture, reference: reference, panel: panelId)
+      return
+    }
+    let liveDrawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
+    let revision = previewRevision
+    let id = panelId
+    let scale = min(UIScreen.main.scale, 1200 / max(rect.width, rect.height, 1))
+    Self.previewQueue.async { [weak self] in
+        // Display does not wait behind document compression or disk saves.
+        // Keep the value cached until the separate archive write is durable.
+        let drawing = liveDrawing ?? CraftoonInkStore.drawing(reference) ?? PKDrawing()
+        let image: UIImage? = autoreleasepool {
+          if drawing.strokes.isEmpty { return nil }
+          var image: UIImage?
+          UITraitCollection(userInterfaceStyle: .light).performAsCurrent { image = drawing.image(from: rect, scale: scale) }
+          return image
+        }
+        DispatchQueue.main.async { [weak self] in
+          guard let self, !self.isDrawingActive, self.panelId == id, self.previewRevision == revision else { return }
+          UIView.performWithoutAnimation {
+            self.previewView.image = image
+            self.previewView.isHidden = false
+            self.previewKey = key
+            self.releaseCanvas()
+          }
+          self.persistPreview(capture, reference: reference, panel: id)
+        }
+    }
+  }
+
+  private func persistPreview(_ capture: CraftoonInkCapture, reference: String, panel id: String) {
+    CraftoonInkStore.queue.async { [weak self] in
+      do {
+        try CraftoonInkStore.persist(capture.drawings)
+        DispatchQueue.main.async { [weak self] in
+          guard let self, !self.isDrawingActive, self.liveCanvas == nil,
+                CraftoonInkStore.latestReferences[id] == reference else { return }
+          RNPencilKitView.drawingCache.removeValue(forKey: id)
+        }
+      } catch { NSLog("Preview checkpoint failed: %@", error.localizedDescription) }
+    }
+  }
+
   override func layoutSubviews() {
     super.layoutSubviews()
-    let currentSize = self.bounds.size
-
-    // 박스 크기가 변경될 때 내부 드로잉(펜 스트로크)도 동일한 비율로 축소/확대
-    if lastBoundsSize.width > 0 && lastBoundsSize.height > 0 &&
-       currentSize.width > 0 && currentSize.height > 0 &&
-       lastBoundsSize != currentSize {
-
-      let scaleX = currentSize.width / lastBoundsSize.width
-      let scaleY = currentSize.height / lastBoundsSize.height
-
-      if !canvasView.drawing.strokes.isEmpty {
-        let transform = CGAffineTransform(scaleX: scaleX, y: scaleY)
-        canvasView.drawing = canvasView.drawing.transformed(using: transform)
-      }
+    previewView.frame = bounds
+    if let canvas = liveCanvas {
+      if canvas.frame != bounds { canvas.frame = bounds }
+      if canvas.contentSize != bounds.size { canvas.contentSize = bounds.size }
+      if canvas.contentOffset != .zero { canvas.contentOffset = .zero }
     }
+    pointerPreview?.frame = bounds
+    pointerPreview?.contentSize = bounds.size
+    if isDrawingActive { scaleInkIfNeeded() }
+    else if lastBoundsSize != bounds.size { schedulePreview() }
+    lastBoundsSize = bounds.size
+  }
 
-    if currentSize.width > 0 && currentSize.height > 0 {
-      lastBoundsSize = currentSize
-    }
-
-    canvasView.frame = self.bounds
-    canvasView.contentSize = currentSize
-    canvasView.contentOffset = .zero
-    pointerPreview?.frame = canvasView.frame
-    pointerPreview?.contentSize = currentSize
+  private func releaseCanvas() {
+    guard let canvas = liveCanvas else { return }
+    canvas.delegate = nil
+    let picker = RNPencilKitView.sharedToolPicker
+    picker?.removeObserver(canvas)
+    picker?.setVisible(false, forFirstResponder: canvas)
+    canvas.resignFirstResponder()
+    committedPreviews.forEach { $0.removeFromSuperview() }
+    committedPreviews.removeAll()
+    canvas.removeGestureRecognizer(pointerInput)
+    canvas.undoManager?.removeAllActions()
+    canvas.removeFromSuperview()
+    liveCanvas = nil
+    canvasAwaitingRender = nil
   }
 
   override func didMoveToWindow() {
     super.didMoveToWindow()
+    detachWork?.cancel()
+    detachWork = nil
+    if window == nil {
+      previewRevision += 1
+      previewTimer?.invalidate()
+      // Fabric can temporarily remove/reinsert siblings when their z-order
+      // changes. Do not clear every panel's pixels during that handoff.
+      let work = DispatchWorkItem { [weak self] in
+        guard let self, self.window == nil else { return }
+        self.checkpointDetachedCanvas()
+        self.previewView.image = nil
+        self.previewKey = nil
+      }
+      detachWork = work
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+      return
+    }
     updateDrawingState()
+  }
+
+  private func checkpointDetachedCanvas() {
+    guard let canvas = liveCanvas else { return }
+    releaseCanvas()
+    if !panelId.isEmpty, CraftoonInkStore.documentPanelIDs?.contains(panelId) != false {
+      let id = panelId
+      RNPencilKitView.drawingCache[id] = canvas.drawing
+      let capture = CraftoonInkStore.capture([["panels": [["id": id]]]])
+      let reference = CraftoonInkStore.latestReferences[id]
+      CraftoonInkStore.queue.async { [weak self] in
+        do {
+          try CraftoonInkStore.persist(capture.drawings)
+          DispatchQueue.main.async { [weak self] in
+            if self?.window == nil, CraftoonInkStore.latestReferences[id] == reference {
+              RNPencilKitView.drawingCache.removeValue(forKey: id)
+            }
+          }
+        } catch { NSLog("Panel checkpoint failed: %@", error.localizedDescription) }
+      }
+    }
   }
 
   private func defaultInkTool() -> PKInkingTool {
@@ -378,31 +621,40 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
         savedDrawingTool = canvasView.tool
       }
       canvasView.tool = PKLassoTool()
-    } else if canvasView.tool is PKLassoTool {
-      canvasView.tool = savedDrawingTool ?? defaultInkTool()
     }
+    // In Draw mode the native palette owns pen/eraser/lasso selection. Do not
+    // replace the lasso just because React updates a panel property.
     if #available(iOS 18.0, *) {
       canvasView.isDrawingEnabled = true
     }
   }
 
   private func updateDrawingState() {
-    canvasView.isUserInteractionEnabled = isDrawingActive
-    let picker = RNPencilKitView.sharedToolPicker
-    // Only the active canvas may follow the shared tool picker.
-    picker?.removeObserver(canvasView)
     guard window != nil, isDrawingActive else {
-      picker?.setVisible(false, forFirstResponder: canvasView)
-      canvasView.resignFirstResponder()
+      if let canvas = liveCanvas {
+        canvas.isUserInteractionEnabled = false
+        let picker = RNPencilKitView.sharedToolPicker
+        picker?.removeObserver(canvas)
+        picker?.setVisible(false, forFirstResponder: canvas)
+        canvas.resignFirstResponder()
+      }
+      schedulePreview()
       return
     }
-
-    if drawingTool == "pen" {
-      picker?.addObserver(canvasView)
-    }
-    canvasView.becomeFirstResponder()
-    picker?.setVisible(drawingTool == "pen", forFirstResponder: canvasView)
-    canvasView.drawingPolicy = .anyInput
+    previewRevision += 1
+    previewTimer?.invalidate()
+    scaleInkIfNeeded()
+    let canvas = canvasView
+    canvas.isUserInteractionEnabled = true
+    canvas.backgroundColor = transparentBackground ? .clear : .white
+    canvas.isOpaque = !transparentBackground
+    let picker = RNPencilKitView.sharedToolPicker
+    picker?.removeObserver(canvas)
+    picker?.addObserver(canvas)
+    if drawingTool == "pen", let selected = picker?.selectedTool { canvas.tool = selected }
+    canvas.becomeFirstResponder()
+    picker?.setVisible(true, forFirstResponder: canvas)
+    canvas.drawingPolicy = .anyInput
     updateTool()
   }
 }

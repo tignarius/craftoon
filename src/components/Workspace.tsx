@@ -9,7 +9,7 @@ import { fitCanvas } from '../utils/canvasFormat';
 import { AppText as Text } from './AppText';
 import { Panel } from './Panel';
 import { SpeechBubble } from './SpeechBubble';
-import { ComicPanel, ComicBubble, PanelMode, ToolType } from '../types/comic';
+import { ComicPanel, ComicBubble, PanelMode, ToolType, TracingImage } from '../types/comic';
 
 const PANEL_GAP = 16;
 const SNAP_THRESHOLD = 18;
@@ -30,6 +30,11 @@ const checkCollision = (
 };
 
 interface WorkspaceProps {
+  onImportTracingImage?: (panelId: string) => void;
+  importingTracingImage?: boolean;
+  editingTracingPanelId?: string | null;
+  onTracingEditingChange?: (panelId: string, editing: boolean) => void;
+  onTracingImageChange?: (panelId: string, image: TracingImage | undefined) => void | Promise<void>;
   canvasSize: { width: number; height: number };
   onSheetBoundsChange: (bounds: { width: number; height: number }) => void;
   panels: ComicPanel[];
@@ -49,6 +54,11 @@ interface WorkspaceProps {
 }
 
 export const Workspace: React.FC<WorkspaceProps> = ({
+  onImportTracingImage,
+  importingTracingImage = false,
+  editingTracingPanelId,
+  onTracingEditingChange,
+  onTracingImageChange,
   canvasSize,
   panels,
   panelModes,
@@ -303,13 +313,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             otherPanels={panels.filter((p) => p.id !== panel.id)}
             sheetBounds={sheetBounds}
             canvasScale={scale}
+            onImportTracingImage={onImportTracingImage}
+            importingTracingImage={importingTracingImage}
+            tracingEditing={editingTracingPanelId === panel.id}
+            onTracingEditingChange={onTracingEditingChange}
+            onTracingImageChange={onTracingImageChange}
             onGuidesChange={setGuides}
             onSelect={onPanelSelect}
             onModeChange={(id) => {
               const current = panelModes[id] || 'layout';
               let next: PanelMode = 'layout';
               if (current === 'layout') next = 'draw';
-              else if (current === 'draw') next = 'edit';
               else next = 'layout';
               onModeChange(id, next);
             }}

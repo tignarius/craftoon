@@ -1,26 +1,34 @@
-import React, { useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   StyleSheet,
   TouchableOpacity,
   PanResponder,
+  Image,
+  ActivityIndicator,
 } from 'react-native';
-import { ComicPanel, PanelMode } from '../types/comic';
-import { Move, Pen, Edit3, Trash2 } from 'lucide-react-native';
+import { ComicPanel, PanelMode, TracingImage } from '../types/comic';
+import { TracingImageControls } from './TracingImageControls';
+import { Image as ImageIcon, Move, Pen, Trash2 } from 'lucide-react-native';
 import { PencilKitView } from '../../PencilKitView';
 
 const MODE_STYLE = {
   layout: { border: '#4ECDC4', icon: '#4ECDC4', bg: 'rgba(78, 205, 196, 0.2)' },
   draw:   { border: '#FF8C42', icon: '#FF8C42', bg: 'rgba(255, 140, 66, 0.2)' },
-  edit:   { border: '#9B59B6', icon: '#9B59B6', bg: 'rgba(155, 89, 182, 0.2)' },
   null:   { border: '#1E293B', icon: '#1E293B', bg: 'transparent' },
 };
 
 interface PanelProps {
+  onImportTracingImage?: (panelId: string) => void;
+  importingTracingImage?: boolean;
   stackOrder?: number;
   canvasScale?: number;
   panel: ComicPanel;
   mode: PanelMode | undefined;
+  transparentBackground?: boolean;
+  tracingEditing?: boolean;
+  onTracingEditingChange?: (panelId: string, editing: boolean) => void;
+  onTracingImageChange?: (panelId: string, image: TracingImage | undefined) => void | Promise<void>;
   otherPanels?: ComicPanel[];
   sheetBounds?: { width: number; height: number };
   onGuidesChange?: (guides: { type: 'vertical' | 'horizontal'; pos: number }[]) => void;
@@ -43,10 +51,16 @@ const RESIZE_HANDLE_SIZE = 28;
 const RESIZE_HANDLE_OFFSET = ACTIVE_BORDER_WIDTH / 2 - PANEL_BORDER_WIDTH - RESIZE_HANDLE_SIZE / 2;
 
 export const Panel: React.FC<PanelProps> = ({
+  onImportTracingImage,
+  importingTracingImage = false,
   stackOrder = 0,
   canvasScale = 1,
   panel,
   mode,
+  transparentBackground = false,
+  tracingEditing = false,
+  onTracingEditingChange,
+  onTracingImageChange,
   otherPanels = [],
   sheetBounds,
   onGuidesChange,
@@ -58,6 +72,11 @@ export const Panel: React.FC<PanelProps> = ({
   onDoubleTap,
   onDrawingUpdate,
 }) => {
+  const [tracingPreview, setTracingPreview] = useState<TracingImage | null>(null);
+  useEffect(() => { setTracingPreview(null); }, [panel.tracingImage, tracingEditing]);
+  const reference = tracingPreview ?? panel.tracingImage;
+  const referenceVisible = !!reference && reference.visible !== false;
+  const clearCanvas = transparentBackground || referenceVisible;
   const scaleRef = useRef(canvasScale);
   scaleRef.current = canvasScale;
   const modeRef = useRef(mode);
@@ -280,13 +299,13 @@ export const Panel: React.FC<PanelProps> = ({
 
   const styleConfig = MODE_STYLE[mode ?? 'null'];
   const isDraw = mode === 'draw';
-  const isEdit = mode === 'edit';
-  const isDrawingOrEditing = isDraw || isEdit;
+  const isDrawingOrEditing = isDraw;
 
   return (
     <View
       style={[
         styles.panelContainer,
+        transparentBackground && styles.transparentPanel,
         {
           left: panel.x,
           top: panel.y,
@@ -300,27 +319,42 @@ export const Panel: React.FC<PanelProps> = ({
         },
       ]}
     >
-      {/* 1. 패널 내부 캔버스: draw(펜) 또는 edit(개별 라인 수정 라쏘) */}
-      <View style={styles.canvasWrapper}>
+      {/* 1. 패널 내부 캔버스: Draw mode includes PencilKit’s pen, eraser and lasso tools */}
+      <View style={[styles.canvasWrapper, clearCanvas && styles.transparentCanvas]}>
+        {referenceVisible && reference && <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <Image testID={`panel-reference-image-${panel.id}`} source={{ uri: reference.uri }} resizeMode="stretch"
+            style={{ position: 'absolute',left: reference.x,top: reference.y,width: reference.width,height: reference.height,
+              opacity: reference.opacity,transform: [{ rotate: `${reference.rotation}deg` }] }} />
+        </View>}
         <PencilKitView
           style={StyleSheet.absoluteFill}
-          isDrawingActive={isDrawingOrEditing}
-          drawingTool={isEdit ? 'lasso' : 'pen'}
+          isDrawingActive={isDrawingOrEditing && !tracingEditing}
+          drawingTool="pen"
           panelId={panel.id}
           drawingData={panel.drawingData}
+          transparentBackground={clearCanvas}
           onDrawingChange={(e) => {
             if (onDrawingUpdate) {
               onDrawingUpdate(panel.id, e.nativeEvent.drawingData);
             }
           }}
         />
+
+      </View>
+
+      <View pointerEvents="box-none" style={styles.referenceControls}>
+        {panel.tracingImage && reference && onTracingImageChange && onTracingEditingChange && <TracingImageControls
+          image={reference} editing={tracingEditing} bounds={{ width: panel.width - 4,height: panel.height - 4 }}
+          canvasScale={canvasScale} onPreview={setTracingPreview}
+          onEditingChange={editing => onTracingEditingChange(panel.id, editing)}
+          onCommit={image => onTracingImageChange(panel.id, image)} />}
       </View>
 
       {/* Selection must not resize or shift the live PencilKit canvas. */}
       {mode && <View pointerEvents="none" style={[styles.selectedOutline, { borderColor: styleConfig.border }]} />}
 
       {/* 2. 레이아웃 모드/선택 상태일 때만 동작하는 이동 오버레이 */}
-      {!isDrawingOrEditing && (
+      {!isDrawingOrEditing && !tracingEditing && (
         <View style={StyleSheet.absoluteFill} {...movePR.panHandlers} />
       )}
 
@@ -328,6 +362,9 @@ export const Panel: React.FC<PanelProps> = ({
       {mode && (
         <View style={styles.topBar} pointerEvents="box-none">
           <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`Panel mode: ${mode === 'draw' ? 'Draw' : 'Layout'}`}
+            accessibilityHint="Switch between Layout and Draw. Use the lasso in the drawing palette to select strokes."
             style={[styles.modeBtn, { backgroundColor: styleConfig.bg }]}
             onPress={() => onModeChange(panel.id)}
             activeOpacity={0.75}
@@ -335,11 +372,12 @@ export const Panel: React.FC<PanelProps> = ({
           >
             {mode === 'layout' && <Move size={15} color={styleConfig.icon} />}
             {mode === 'draw' && <Pen size={15} color={styleConfig.icon} />}
-            {mode === 'edit' && <Edit3 size={15} color={styleConfig.icon} />}
           </TouchableOpacity>
 
           {mode === 'layout' && (
             <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Delete panel"
               style={styles.deleteBtn}
               onPress={() => onDelete(panel.id)}
               activeOpacity={0.75}
@@ -347,11 +385,20 @@ export const Panel: React.FC<PanelProps> = ({
               <Trash2 size={13} color="#EF4444" />
             </TouchableOpacity>
           )}
+          {mode === 'draw' && onImportTracingImage && <TouchableOpacity
+            accessibilityRole="button" accessibilityLabel="Import panel reference image"
+            accessibilityHint="Choose an image for this panel from Photos or Files"
+            accessibilityState={{ disabled: importingTracingImage, busy: importingTracingImage }}
+            disabled={importingTracingImage} onPress={() => onImportTracingImage(panel.id)}
+            style={[styles.deleteBtn,styles.imageBtn,importingTracingImage && styles.importing]} activeOpacity={0.75}>
+            {importingTracingImage ? <ActivityIndicator size="small" color="#EA8A23" />
+              : <ImageIcon size={15} color="#EA8A23" />}
+          </TouchableOpacity>}
         </View>
       )}
 
       {/* 4. 리사이즈 핸들 */}
-      {mode === 'layout' && (
+      {mode === 'layout' && !tracingEditing && (
         <View style={styles.resizeHandle} {...resizePR.panHandlers}>
           <View style={styles.resizeKnob} />
         </View>
@@ -361,6 +408,11 @@ export const Panel: React.FC<PanelProps> = ({
 };
 
 const styles = StyleSheet.create({
+  imageBtn: { backgroundColor: '#FFF5E8',borderColor: '#FED7AA' },
+  importing: { opacity: 0.5 },
+  referenceControls: { position: 'absolute',top: 2,left: 2,right: 2,bottom: 2,overflow: 'hidden',zIndex: 45 },
+  transparentPanel: { backgroundColor: 'transparent', shadowOpacity: 0 },
+  transparentCanvas: { backgroundColor: 'transparent' },
   panelContainer: {
     position: 'absolute',
     backgroundColor: '#FFFFFF',
@@ -395,7 +447,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    zIndex: 30,
+    zIndex: 60,
   },
   modeBtn: {
     width: 28,

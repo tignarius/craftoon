@@ -3,6 +3,10 @@ import React
 import PencilKit
 import UIKit
 import MessageUI
+import UniformTypeIdentifiers
+import ImageIO
+import CryptoKit
+import Photos
 
 @objc(RNPencilKitManager)
 class RNPencilKitManager: RCTViewManager {
@@ -19,10 +23,39 @@ class RNPencilKitManager: RCTViewManager {
 // Store complete comics in Application Support, outside temporary/cache storage.
 @objc(CraftoonLibrary)
 class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
+  private var tracingPicker: CraftoonTracingImagePicker?
   private var mailCompletion: ((Bool, Error?) -> Void)?
-  private let storageQueue = DispatchQueue(label: "com.craftoon.library")
+  private let storageQueue = CraftoonInkStore.queue
 
   @objc static func requiresMainQueueSetup() -> Bool { false }
+
+  @objc func pickTracingImage(_ resolve: @escaping RCTPromiseResolveBlock,
+                              rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.main.async {
+      guard self.tracingPicker == nil, let presenter = RCTPresentedViewController() else {
+        reject("IMAGE_PICKER_BUSY", "Please close the current image picker and try again.", nil)
+        return
+      }
+      let picker = CraftoonTracingImagePicker { result in
+        self.tracingPicker = nil
+        switch result {
+        case .success(let image): resolve(image)
+        case .failure(let error): reject("IMAGE_IMPORT_FAILED", error.localizedDescription, error)
+        }
+      }
+      self.tracingPicker = picker
+      picker.present(from: presenter)
+    }
+  }
+
+  @objc func retainInkReferences(_ references: NSArray,
+                                  resolver resolve: @escaping RCTPromiseResolveBlock,
+                                  rejecter reject: @escaping RCTPromiseRejectBlock) {
+    DispatchQueue.main.async {
+      CraftoonInkStore.retain(references.compactMap { $0 as? String })
+      resolve(nil)
+    }
+  }
 
   @objc func saveDraft(_ draft: NSDictionary,
                        resolver resolve: @escaping RCTPromiseResolveBlock,
@@ -209,7 +242,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     return CGSize(width: pageWidth, height: pageHeight)
   }
 
-  func pageImage(_ page: [String: Any], thumbnail: Bool = false, maxPixels: CGFloat = 2400) -> UIImage? {
+  func pageImage(_ page: [String: Any], thumbnail: Bool = false, maxPixels: CGFloat = 2400, useLiveInk: Bool = false) -> UIImage? {
     let panels = page["panels"] as? [[String: Any]] ?? []
     let bubbles = page["bubbles"] as? [[String: Any]] ?? []
     let dimensions = pageSize(page)
@@ -245,8 +278,8 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
           outline.fill()
           let content = rect.insetBy(dx: border, dy: border)
           if content.width > 0, content.height > 0,
-             let encoded = panel["drawingData"] as? String,
-             let data = Data(base64Encoded: encoded), let drawing = try? PKDrawing(data: data) {
+             let drawing = (useLiveInk ? RNPencilKitView.drawingCache[panel["id"] as? String ?? ""] : nil)
+               ?? CraftoonInkStore.drawing(panel["drawingData"] as? String ?? "") {
             context.saveGState()
             context.clip(to: content)
             let ink = drawing.image(from: CGRect(origin: .zero, size: content.size), scale: max(0.05, scale * format.scale))
@@ -405,17 +438,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
         reject("PRINT_FAILED", "The comic has no pages.", nil)
         return
       }
-      let images = pages.compactMap { page -> UIImage? in
-        var snapshot = page
-        var panels = page["panels"] as? [[String: Any]] ?? []
-        for index in panels.indices {
-          if let id = panels[index]["id"] as? String, let drawing = RNPencilKitView.drawingCache[id] {
-            panels[index]["drawingData"] = drawing.dataRepresentation().base64EncodedString()
-          }
-        }
-        snapshot["panels"] = panels
-        return self.pageImage(snapshot)
-      }
+      let images = pages.compactMap { self.pageImage($0, useLiveInk: true) }
       guard images.count == pages.count,
             let window = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
               .flatMap({ $0.windows }).first(where: { $0.isKeyWindow }) else {
@@ -489,32 +512,18 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
         reject("CAPTURE_FAILED", "Could not preserve the current canvas.", nil)
         return
       }
-      for pageIndex in pages.indices {
-        var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
-        for panelIndex in panels.indices {
-          if let id = panels[panelIndex]["id"] as? String,
-             let drawing = RNPencilKitView.drawingCache[id] {
-            panels[panelIndex]["drawingData"] = drawing.dataRepresentation().base64EncodedString()
-          }
-        }
-        pages[pageIndex]["panels"] = panels
+      let capture = CraftoonInkStore.capture(pages)
+      CraftoonInkStore.queue.async {
+        do {
+          try CraftoonInkStore.persist(capture.drawings)
+          DispatchQueue.main.async { resolve(capture.pages) }
+        } catch { reject("CAPTURE_FAILED", "Could not preserve the current canvas.", error) }
       }
-      resolve(pages)
     }
   }
 
   private func restoreDrawingCache(_ pages: [[String: Any]]) {
-    for page in pages {
-      for panel in page["panels"] as? [[String: Any]] ?? [] {
-        guard let id = panel["id"] as? String else { continue }
-        if let encoded = panel["drawingData"] as? String,
-           let bytes = Data(base64Encoded: encoded), let drawing = try? PKDrawing(data: bytes) {
-          RNPencilKitView.drawingCache[id] = drawing
-        } else {
-          RNPencilKitView.drawingCache.removeValue(forKey: id)
-        }
-      }
-    }
+    CraftoonInkStore.reset(pages)
   }
 
   @objc func restorePages(_ source: NSArray,
@@ -542,22 +551,15 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
         reject("SAVE_FAILED", "The comic has no pages.", nil)
         return
       }
-      for pageIndex in pages.indices {
-        var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
-        for panelIndex in panels.indices {
-          if let panelId = panels[panelIndex]["id"] as? String,
-             let drawing = RNPencilKitView.drawingCache[panelId] {
-            panels[panelIndex]["drawingData"] = drawing.dataRepresentation().base64EncodedString()
-          }
-        }
-        pages[pageIndex]["panels"] = panels
-      }
+      let capture = CraftoonInkStore.capture(pages)
+      pages = capture.pages
       snapshot["pages"] = pages
       snapshot["version"] = 1
-      snapshot["storageVersion"] = 2
+      snapshot["storageVersion"] = 4
       let document = snapshot
       self.storageQueue.async {
         do {
+          try CraftoonInkStore.persist(capture.drawings)
           var savedDocument = document
           let destination = try self.storyURL(id)
           let existing = (try? Data(contentsOf: destination)).flatMap { try? decodeComicDocument($0) }
@@ -663,14 +665,13 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     storageQueue.async {
       do {
         let data = try Data(contentsOf: self.storyURL(id))
-        let story = try decodeComicDocument(data)
+        let story = try CraftoonInkStore.compact(decodeComicDocument(data))
         guard let pages = story["pages"] as? [[String: Any]], !pages.isEmpty else {
           throw NSError(domain: "CraftoonLibrary", code: 2,
             userInfo: [NSLocalizedDescriptionKey: "This comic file is invalid."])
         }
         DispatchQueue.main.async {
-          // Restore the saved version regardless of React native prop ordering.
-          self.restoreDrawingCache(pages)
+          // Library previews must not replace the open draft's native state.
           resolve(story)
         }
       } catch { reject("LOAD_FAILED", "Could not load this comic.", error) }
@@ -767,18 +768,9 @@ class CraftoonReaderView: UIView, UIPageViewControllerDataSource, UIPageViewCont
   }
   private func page(_ index: Int) -> ComicBookPage? {
     guard index >= 0, index < pages.count, var content = pages[index] as? [String: Any] else { return nil }
-    // A stroke can reach the native cache before React receives its serialized data.
-    // Preview the current ink immediately when switching directly from the canvas.
-    var panels = content["panels"] as? [[String: Any]] ?? []
-    for panelIndex in panels.indices {
-      if let id = panels[panelIndex]["id"] as? String,
-         let drawing = RNPencilKitView.drawingCache[id] {
-        panels[panelIndex]["drawingData"] = drawing.dataRepresentation().base64EncodedString()
-      }
-    }
-    content["panels"] = panels
-    return ComicBookPage(index: index, image: renderer.pageImage(content))
+    return ComicBookPage(index: index, image: renderer.pageImage(content, useLiveInk: true))
   }
+
   private func showPage(animated: Bool) {
     let target = min(max(0, pageIndex), max(0, pages.count - 1))
     guard let controller = page(target) else { return }
@@ -1006,6 +998,7 @@ private final class CraftoonMailAttachment: NSObject, UIActivityItemSource {
 // saves are still accepted; thumbnails use JPEG but PencilKit strokes stay exact.
 private let comicStorageMagic = Data("CRAFT02\n".utf8)
 private func encodeComicDocument(_ story: [String: Any]) throws -> Data {
+  try CraftoonInkStore.validate(story)
   let json = try JSONSerialization.data(withJSONObject: story)
   let compressed = try (json as NSData).compressed(using: .lzfse) as Data
   return compressed.count + comicStorageMagic.count < json.count ? comicStorageMagic + compressed : json
@@ -1027,25 +1020,32 @@ private func decodeComicDocument(_ data: Data) throws -> [String: Any] {
 // before its serialized drawing-change event reaches JavaScript.
 final class CraftoonDraftRecovery {
   static let shared = CraftoonDraftRecovery()
-  private let queue = DispatchQueue(label: "com.craftoon.canvas-recovery")
+  private let queue = CraftoonInkStore.queue
   private var document: [String: Any]?
   private var timer: Timer?
   private var observers: [NSObjectProtocol] = []
   // Accessed only on the storage queue. Never overwrite an unreadable recovery
   // file until a separate copy has been preserved for possible recovery.
   private var preserveUnreadableDraft = false
+  private let storageURL: URL?
+  private(set) var completedWrites = 0
 
-  private init() {
+  init(storageURL: URL? = nil, observeLifecycle: Bool = true) {
+    self.storageURL = storageURL
+    guard observeLifecycle else { return }
+    CraftoonInkStore.collectOldRevisions()
     for name in [UIApplication.willResignActiveNotification,
                  UIApplication.didEnterBackgroundNotification,
                  UIApplication.willTerminateNotification] {
       observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-        self?.flushSynchronously()
+        if name == UIApplication.willTerminateNotification { self?.flushSynchronously() }
+        else { self?.flushInBackground() }
       })
     }
   }
 
   private func fileURL() throws -> URL {
+    if let storageURL { return storageURL }
     let root = try FileManager.default.url(for: .applicationSupportDirectory,
       in: .userDomainMask, appropriateFor: nil, create: true)
     let folder = root.appendingPathComponent("CraftoonRecovery", isDirectory: true)
@@ -1053,22 +1053,17 @@ final class CraftoonDraftRecovery {
     return folder.appendingPathComponent("current.json")
   }
 
-  private func snapshot() -> [String: Any]? {
-    guard var snapshot = document, var pages = snapshot["pages"] as? [[String: Any]] else { return nil }
-    for pageIndex in pages.indices {
-      var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
-      for panelIndex in panels.indices {
-        if let id = panels[panelIndex]["id"] as? String,
-           let drawing = RNPencilKitView.drawingCache[id] {
-          panels[panelIndex]["drawingData"] = drawing.dataRepresentation().base64EncodedString()
-        }
-      }
-      pages[pageIndex]["panels"] = panels
-    }
-    snapshot["pages"] = pages
+  private var writing = false
+  private var saveAgain = false
+  private var completions: [(Result<Void, Error>) -> Void] = []
+
+  private func snapshot() -> (document: [String: Any], drawings: [(String, PKDrawing)])? {
+    guard var snapshot = document, let pages = snapshot["pages"] as? [[String: Any]] else { return nil }
+    let capture = CraftoonInkStore.capture(pages)
+    snapshot["pages"] = capture.pages
     snapshot["updatedAt"] = ISO8601DateFormatter().string(from: Date())
     document = snapshot
-    return snapshot
+    return (snapshot, capture.drawings)
   }
 
   private func write(_ snapshot: [String: Any]) throws {
@@ -1079,10 +1074,12 @@ final class CraftoonDraftRecovery {
       preserveUnreadableDraft = false
     }
     try encodeComicDocument(snapshot).write(to: url, options: .atomic)
+    completedWrites += 1
   }
 
   func update(_ document: [String: Any], completion: @escaping (Result<Void, Error>) -> Void) {
     self.document = document
+    CraftoonInkStore.reconcile(document["pages"] as? [[String: Any]] ?? [])
     flush(completion: completion)
   }
 
@@ -1105,12 +1102,25 @@ final class CraftoonDraftRecovery {
   func flush(completion: ((Result<Void, Error>) -> Void)? = nil) {
     timer?.invalidate()
     timer = nil
-    guard let snapshot = snapshot() else { completion?(.success(())); return }
+    if let completion { completions.append(completion) }
+    guard !writing else { saveAgain = true; return }
+    guard let captured = snapshot() else {
+      let callbacks = completions; completions.removeAll()
+      callbacks.forEach { $0(.success(())) }; return
+    }
+    writing = true
+    saveAgain = false
+    let callbacks = completions; completions.removeAll()
     queue.async {
-      do { try self.write(snapshot); completion?(.success(())) }
-      catch {
-        NSLog("Canvas recovery save failed: %@", error.localizedDescription)
-        completion?(.failure(error))
+      let result: Result<Void, Error> = Result {
+        try CraftoonInkStore.persist(captured.drawings)
+        try self.write(captured.document)
+      }
+      DispatchQueue.main.async {
+        self.writing = false
+        callbacks.forEach { $0(result) }
+        if case .failure(let error) = result { NSLog("Canvas recovery failed: %@", error.localizedDescription) }
+        if self.saveAgain { self.flush() }
       }
     }
   }
@@ -1118,12 +1128,22 @@ final class CraftoonDraftRecovery {
   private func flushSynchronously() {
     timer?.invalidate()
     timer = nil
-    guard let snapshot = snapshot() else { return }
-    // Finish the latest checkpoint before iOS suspends the process. Do not rely
-    // on a JavaScript background event or on receiving a termination callback.
+    guard let captured = snapshot() else { return }
     queue.sync {
-      do { try self.write(snapshot) }
-      catch { NSLog("Canvas recovery checkpoint failed: %@", error.localizedDescription) }
+      do {
+        try CraftoonInkStore.persist(captured.drawings)
+        try self.write(captured.document)
+      } catch { NSLog("Canvas recovery checkpoint failed: %@", error.localizedDescription) }
+    }
+  }
+
+  private func flushInBackground() {
+    var task = UIBackgroundTaskIdentifier.invalid
+    task = UIApplication.shared.beginBackgroundTask(withName: "Protect canvas") {
+      if task != .invalid { UIApplication.shared.endBackgroundTask(task); task = .invalid }
+    }
+    flush { _ in
+      if task != .invalid { UIApplication.shared.endBackgroundTask(task); task = .invalid }
     }
   }
 
@@ -1133,7 +1153,7 @@ final class CraftoonDraftRecovery {
         let url = try self.fileURL()
         guard FileManager.default.fileExists(atPath: url.path) else { completion(.success(nil)); return }
         let data = try Data(contentsOf: url)
-        let document = try decodeComicDocument(data)
+        let document = try CraftoonInkStore.compact(decodeComicDocument(data))
         guard document["id"] is String,
               let pages = document["pages"] as? [[String: Any]], !pages.isEmpty else {
           throw NSError(domain: "CraftoonRecovery", code: 1,
@@ -1159,4 +1179,503 @@ private final class CanvasRotationController: UIViewController {
     return mask == .landscapeLeft ? .landscapeLeft : .landscapeRight
   }
   override func loadView() { view = UIView(); view.backgroundColor = .clear }
+}
+
+// System pickers provide selected images without broad photo-library access.
+// Embed a bounded, orientation-correct copy in the document; picker URLs expire.
+private final class CraftoonTracingImagePicker: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate, UIDocumentPickerDelegate, UIPopoverPresentationControllerDelegate {
+  typealias Imported = [String: Any]
+  private var completion: ((Result<Imported?, Error>) -> Void)?
+  init(completion: @escaping (Result<Imported?, Error>) -> Void) { self.completion = completion }
+
+  func present(from presenter: UIViewController) {
+    let choice = UIAlertController(title: "Reference image", message: nil, preferredStyle: .alert)
+    choice.addAction(UIAlertAction(title: "Photos", style: .default) { [weak self, weak presenter] _ in
+      guard let self, let presenter else { return }
+      // Receive the selected UIImage directly. PHPicker's item-provider export
+      // can fail on device before any JPEG/PNG bytes reach the app.
+      let picker = UIImagePickerController()
+      picker.sourceType = .photoLibrary
+      picker.mediaTypes = [UTType.image.identifier]
+      picker.allowsEditing = false
+      picker.delegate = self
+      if UIDevice.current.userInterfaceIdiom == .pad {
+        picker.modalPresentationStyle = .popover
+        picker.preferredContentSize = CGSize(width: 600, height: 650)
+        picker.popoverPresentationController?.sourceView = presenter.view
+        picker.popoverPresentationController?.sourceRect = CGRect(x: presenter.view.bounds.midX, y: presenter.view.bounds.midY, width: 1, height: 1)
+        picker.popoverPresentationController?.permittedArrowDirections = []
+        picker.popoverPresentationController?.delegate = self
+      }
+      presenter.present(picker, animated: true)
+    })
+    choice.addAction(UIAlertAction(title: "Files", style: .default) { [weak self, weak presenter] _ in
+      guard let self, let presenter else { return }
+      let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.image], asCopy: true)
+      picker.allowsMultipleSelection = false
+      picker.delegate = self
+      presenter.present(picker, animated: true)
+    })
+    choice.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in self?.finish(.success(nil)) })
+    presenter.present(choice, animated: true)
+  }
+
+  func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+    picker.dismiss(animated: true) { self.finish(.success(nil)) }
+  }
+
+  func popoverPresentationControllerDidDismissPopover(_ popoverPresentationController: UIPopoverPresentationController) {
+    finish(.success(nil))
+  }
+
+  func imagePickerController(_ picker: UIImagePickerController,
+                             didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+    CraftoonReferenceImageLoader.loadPickedImage(info) { [self] result in
+      DispatchQueue.main.async {
+        picker.dismiss(animated: true) { self.finish(result.map { Optional($0) }) }
+      }
+    }
+  }
+
+  func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(.success(nil)) }
+  func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+    guard let url = urls.first else { finish(.success(nil)); return }
+    DispatchQueue.global(qos: .userInitiated).async { [self] in
+      let access = url.startAccessingSecurityScopedResource()
+      defer { if access { url.stopAccessingSecurityScopedResource() } }
+      do { finish(.success(try CraftoonReferenceImageLoader.readImage(url))) }
+      catch { finish(.failure(error)) }
+    }
+  }
+
+  private func finish(_ result: Result<Imported?, Error>) {
+    if case .failure(let error) = result {
+      let failure = error as NSError
+      let report = "Image import failed: \(failure.domain) (\(failure.code))\n\(failure)\n"
+      if let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+        try? report.write(to: cache.appendingPathComponent("CraftoonImageImportFailure.txt"), atomically: true, encoding: .utf8)
+      }
+    }
+    DispatchQueue.main.async {
+      let callback = self.completion
+      self.completion = nil
+      callback?(result)
+    }
+  }
+}
+
+
+// Normalize the UIImage supplied by Photos or decode a selected file's bytes.
+enum CraftoonReferenceImageLoader {
+  typealias Imported = [String: Any]
+  static func loadPickedImage(_ info: [UIImagePickerController.InfoKey: Any],
+                              completion: @escaping (Result<Imported, Error>) -> Void) {
+    DispatchQueue.global(qos: .userInitiated).async {
+      do { completion(.success(try readPickedImage(info))); return }
+      catch {
+        // Some devices return only an assets-library reference, without pixels
+        // or a file URL. Read that selected asset through PhotoKit instead.
+        guard info[.phAsset] is PHAsset || info[.referenceURL] is URL else {
+          completion(.failure(error)); return
+        }
+      }
+      DispatchQueue.main.async {
+        PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+          guard status == .authorized || status == .limited else {
+            completion(.failure(NSError(domain: "CraftoonTracing", code: 7, userInfo: [
+              NSLocalizedDescriptionKey: "Allow access to this photo in Settings, or import it using Files.",
+            ]))); return
+          }
+          let asset = (info[.phAsset] as? PHAsset) ?? (info[.referenceURL] as? URL).flatMap {
+            PHAsset.fetchAssets(withALAssetURLs: [$0], options: nil).firstObject
+          }
+          guard let asset else {
+            completion(.failure(NSError(domain: "CraftoonTracing", code: 8, userInfo: [
+              NSLocalizedDescriptionKey: "This photo is not included in the photos Craftoon can access. Allow access to it in Settings, or import it using Files.",
+            ]))); return
+          }
+          let options = PHImageRequestOptions()
+          options.version = .current
+          options.deliveryMode = .highQualityFormat
+          options.isNetworkAccessAllowed = true
+          PHImageManager.default().requestImageDataAndOrientation(for: asset, options: options) { data, _, _, response in
+            if let error = response?[PHImageErrorKey] as? Error {
+              completion(.failure(error)); return
+            }
+            guard let data else { completion(.failure(invalidImage(9))); return }
+            do { completion(.success(try readData(data))) }
+            catch { completion(.failure(error)) }
+          }
+        }
+      }
+    }
+  }
+
+  static func readPickedImage(_ info: [UIImagePickerController.InfoKey: Any]) throws -> Imported {
+    let details = info.map { key, value -> String in
+      var detail = "\(key.rawValue): \(type(of: value))"
+      if let image = value as? UIImage {
+        detail += " size=\(image.size) scale=\(image.scale) orientation=\(image.imageOrientation.rawValue) cgImage=\(image.cgImage != nil)"
+      }
+      if let url = value as? URL { detail += " exists=\(FileManager.default.fileExists(atPath: url.path))" }
+      return detail
+    }.sorted().joined(separator: "\n")
+    if let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+      try? details.write(to: cache.appendingPathComponent("CraftoonImageImportTrace.txt"), atomically: true, encoding: .utf8)
+    }
+    if let image = info[.originalImage] as? UIImage { return try normalize(image) }
+    if let url = info[.imageURL] as? URL { return try readImage(url) }
+    throw invalidImage(2)
+  }
+
+  private static func invalidImage(_ code: Int = 1) -> Error {
+    NSError(domain: "CraftoonTracing", code: code,
+      userInfo: [NSLocalizedDescriptionKey: "This photo could not be loaded. Please try selecting it again."])
+  }
+
+  static func readImage(_ url: URL) throws -> Imported {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary)
+    else { throw invalidImage(3) }
+    return try readSource(source)
+  }
+
+  static func readData(_ data: Data) throws -> Imported {
+    guard let source = CGImageSourceCreateWithData(data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary)
+    else { throw invalidImage(3) }
+    return try readSource(source)
+  }
+
+  private static func readSource(_ source: CGImageSource) throws -> Imported {
+    guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+      kCGImageSourceCreateThumbnailFromImageAlways: true,
+      kCGImageSourceCreateThumbnailWithTransform: true,
+      kCGImageSourceThumbnailMaxPixelSize: 2048,
+      kCGImageSourceShouldCacheImmediately: true,
+    ] as CFDictionary) else { throw invalidImage(4) }
+    return try encode(UIImage(cgImage: cg))
+  }
+
+  static func normalize(_ image: UIImage) throws -> Imported {
+    let sideways = [.left, .leftMirrored, .right, .rightMirrored].contains(image.imageOrientation)
+    let pixels = image.cgImage.map { CGSize(width: $0.width, height: $0.height) }
+      ?? CGSize(width: image.size.width * image.scale, height: image.size.height * image.scale)
+    let oriented = sideways ? CGSize(width: pixels.height, height: pixels.width) : pixels
+    let factor = min(1, 2048 / max(oriented.width, oriented.height, 1))
+    let size = CGSize(width: max(1, (oriented.width * factor).rounded()), height: max(1, (oriented.height * factor).rounded()))
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    let normalized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+      image.draw(in: CGRect(origin: .zero, size: size))
+    }
+    return try encode(normalized)
+  }
+
+  private static func encode(_ image: UIImage) throws -> Imported {
+    let data: Data
+    let mime: String
+    if let png = image.pngData(), png.count <= 6_000_000 {
+      data = png; mime = "image/png"
+    } else {
+      let format = UIGraphicsImageRendererFormat()
+      format.scale = 1
+      format.opaque = true
+      let flattened = UIGraphicsImageRenderer(size: image.size, format: format).image { context in
+        UIColor.white.setFill()
+        context.fill(CGRect(origin: .zero, size: image.size))
+        image.draw(at: .zero)
+      }
+      guard let jpeg = flattened.jpegData(compressionQuality: 0.88) else { throw invalidImage(5) }
+      data = jpeg; mime = "image/jpeg"
+    }
+    var stored = try CraftoonReferenceImageStore.store(data, mime: mime)
+    stored["width"] = Int(image.size.width)
+    stored["height"] = Int(image.size.height)
+    return stored
+  }
+}
+
+// Immutable native ink files keep stroke payloads out of React state and undo
+// history. Original Base64 documents remain readable. Archive writes run off-main.
+struct CraftoonInkCapture {
+  var pages: [[String: Any]]
+  var drawings: [(String, PKDrawing)]
+}
+
+enum CraftoonInkStore {
+  static let prefix = "craftoon-ink:"
+  static let queue = DispatchQueue(label: "com.craftoon.ink", qos: .utility, autoreleaseFrequency: .workItem)
+  // Main-thread state: latest references survive view/page changes, not drawings.
+  static var latestReferences: [String: String] = [:]
+  static var documentPanelIDs: Set<String>?
+
+  static func reconcile(_ pages: [[String: Any]]) {
+    let ids = Set(pages.flatMap { $0["panels"] as? [[String: Any]] ?? [] }.compactMap { $0["id"] as? String })
+    documentPanelIDs = ids
+    latestReferences = latestReferences.filter { ids.contains($0.key) }
+    RNPencilKitView.drawingCache = RNPencilKitView.drawingCache.filter { ids.contains($0.key) }
+  }
+  private static let fileLock = NSLock()
+  // This lock is never acquired by main-thread reference bookkeeping.
+  private static let archiveLock = NSLock()
+  private static var protectedReferences: [String: TimeInterval] = [:]
+  private static var retainedReferences = Set<String>()
+  private static var lastCollection = Date.distantPast
+
+  // React supplies only the immutable references still reachable by Undo and
+  // the current document. Short leases cover event/checkpoint races.
+  static func retain(_ references: [String]) {
+    let retained = Set(references.filter { $0.hasPrefix(prefix) })
+      .union(latestReferences.values.filter { $0.hasPrefix(prefix) })
+    fileLock.lock(); retainedReferences = retained; fileLock.unlock()
+    if Date().timeIntervalSince(lastCollection) > 60 {
+      lastCollection = Date()
+      collectOldRevisions()
+    }
+  }
+
+  private static func folder() throws -> URL {
+    let root = try FileManager.default.url(for: .applicationSupportDirectory,
+      in: .userDomainMask, appropriateFor: nil, create: true)
+    let url = root.appendingPathComponent("CraftoonInk", isDirectory: true)
+    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+  }
+
+  private static func url(_ reference: String) throws -> URL {
+    let id = String(reference.dropFirst(prefix.count))
+    guard reference.hasPrefix(prefix), UUID(uuidString: id) != nil else {
+      throw NSError(domain: "CraftoonInk", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid drawing reference."])
+    }
+    return try folder().appendingPathComponent(id).appendingPathExtension("drawing")
+  }
+
+  private static func protect(_ reference: String) {
+    let now = Date().timeIntervalSince1970
+    fileLock.lock()
+    protectedReferences = protectedReferences.filter { $0.value > now }
+    protectedReferences[reference] = now + 120
+    fileLock.unlock()
+  }
+
+  static func data(_ value: String) throws -> Data {
+    if value.hasPrefix(prefix) {
+      protect(value)
+      return try Data(contentsOf: url(value))
+    }
+    guard let data = Data(base64Encoded: value) else {
+      throw NSError(domain: "CraftoonInk", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not read the drawing."])
+    }
+    return data
+  }
+
+  static func drawing(_ value: String) -> PKDrawing? {
+    guard !value.isEmpty, let bytes = try? data(value) else { return nil }
+    return try? PKDrawing(data: bytes)
+  }
+
+  // Called on main. Captures PKDrawing values without serializing any strokes.
+  static func capture(_ source: [[String: Any]]) -> CraftoonInkCapture {
+    RNPencilKitView.prepareForCapture()
+    var pages = source
+    var drawings: [(String, PKDrawing)] = []
+    for pageIndex in pages.indices {
+      var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
+      for index in panels.indices {
+        guard let id = panels[index]["id"] as? String else { continue }
+        if let drawing = RNPencilKitView.drawingCache[id] {
+          let existing = latestReferences[id].flatMap { $0.hasPrefix(prefix) ? $0 : nil }
+          let reference = existing ?? (prefix + UUID().uuidString)
+          latestReferences[id] = reference
+          protect(reference)
+          panels[index]["drawingData"] = reference
+          drawings.append((reference, drawing))
+        } else if let reference = latestReferences[id] {
+          panels[index]["drawingData"] = reference
+        }
+      }
+      pages[pageIndex]["panels"] = panels
+    }
+    return CraftoonInkCapture(pages: pages, drawings: drawings)
+  }
+
+  static func persist(_ captures: [(String, PKDrawing)], archive: (PKDrawing) throws -> Data = { $0.dataRepresentation() }) throws {
+    for (reference, drawing) in captures {
+      // One archive per revision, even when recovery and Library both request it.
+      archiveLock.lock()
+      do {
+        let destination = try url(reference)
+        if !FileManager.default.fileExists(atPath: destination.path) {
+          try autoreleasepool { try archive(drawing).write(to: destination, options: .atomic) }
+        }
+        archiveLock.unlock()
+      } catch { archiveLock.unlock(); throw error }
+    }
+  }
+
+  // Opening legacy documents migrates the ink only; the original file stays
+  // untouched until a successful save. Failure never substitutes empty drawings.
+  static func compact(_ document: [String: Any]) throws -> [String: Any] {
+    var document = document
+    var pages = document["pages"] as? [[String: Any]] ?? []
+    for pageIndex in pages.indices {
+      var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
+      for index in panels.indices {
+        guard let value = panels[index]["drawingData"] as? String, !value.isEmpty else { continue }
+        if value.hasPrefix(prefix) { _ = try data(value); continue }
+        let bytes = try data(value)
+        let hash = SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
+        let id = "\(hash.prefix(8))-\(hash.dropFirst(8).prefix(4))-\(hash.dropFirst(12).prefix(4))-\(hash.dropFirst(16).prefix(4))-\(hash.dropFirst(20).prefix(12))"
+        let reference = prefix + id
+        protect(reference)
+        if !FileManager.default.fileExists(atPath: try url(reference).path) {
+          try persist([(reference, try PKDrawing(data: bytes))])
+        }
+        panels[index]["drawingData"] = reference
+      }
+      pages[pageIndex]["panels"] = panels
+    }
+    document["pages"] = pages
+    document["storageVersion"] = 4
+    return try CraftoonReferenceImageStore.compact(document)
+  }
+
+  static func validate(_ document: [String: Any]) throws {
+    for page in document["pages"] as? [[String: Any]] ?? [] {
+      for panel in page["panels"] as? [[String: Any]] ?? [] {
+        if let value = panel["drawingData"] as? String, value.hasPrefix(prefix) {
+          guard FileManager.default.fileExists(atPath: try url(value).path) else {
+            throw NSError(domain: "CraftoonInk", code: 3, userInfo: [NSLocalizedDescriptionKey: "A drawing could not be preserved. The previous recovery file is unchanged."])
+          }
+        }
+      }
+    }
+  }
+
+  static func reset(_ pages: [[String: Any]]) {
+    reconcile(pages)
+    RNPencilKitView.drawingCache.removeAll()
+    latestReferences.removeAll()
+    for page in pages {
+      for panel in page["panels"] as? [[String: Any]] ?? [] {
+        if let id = panel["id"] as? String, let value = panel["drawingData"] as? String, !value.isEmpty {
+          latestReferences[id] = value
+        }
+      }
+    }
+    RNPencilKitView.restoreVisibleDrawings()
+  }
+
+  // Remove abandoned immutable revisions from previous sessions. Current session
+  // references (including undo) are retained. If a document is unreadable, keep
+  // every ink file rather than risk removing a recoverable drawing.
+  static func collectOldRevisions(root: URL? = nil) {
+    queue.async {
+      do {
+        let inkFolder: URL
+        if let root { inkFolder = root.appendingPathComponent("CraftoonInk", isDirectory: true) }
+        else { inkFolder = try folder() }
+        let root = inkFolder.deletingLastPathComponent()
+        var retained = Set<String>()
+        for name in ["CraftoonLibrary", "CraftoonRecovery"] {
+          let directory = root.appendingPathComponent(name)
+          if let files = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) {
+            for case let file as URL in files where file.pathExtension == "json" {
+              let references: [String] = try autoreleasepool {
+                let document = try decodeComicDocument(Data(contentsOf: file))
+                return (document["pages"] as? [[String: Any]] ?? []).flatMap { page in
+                  (page["panels"] as? [[String: Any]] ?? []).compactMap { panel in
+                    guard let value = panel["drawingData"] as? String, value.hasPrefix(prefix) else { return nil }
+                    return value
+                  }
+                }
+              }
+              retained.formUnion(references)
+            }
+          }
+        }
+        for file in try FileManager.default.contentsOfDirectory(at: inkFolder, includingPropertiesForKeys: [.contentModificationDateKey]) {
+          guard file.pathExtension == "drawing", UUID(uuidString: file.deletingPathExtension().lastPathComponent) != nil else { continue }
+          let reference = prefix + file.deletingPathExtension().lastPathComponent
+          // Leave recent writes alone across app termination/recovery boundaries.
+          let date = try file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate ?? Date()
+          guard Date().timeIntervalSince(date) > 120, !retained.contains(reference) else { continue }
+          fileLock.lock()
+          if !retainedReferences.contains(reference), (protectedReferences[reference] ?? 0) < Date().timeIntervalSince1970 {
+            try? FileManager.default.removeItem(at: file)
+            protectedReferences.removeValue(forKey: reference)
+          }
+          fileLock.unlock()
+        }
+      } catch { NSLog("Ink cleanup deferred: %@", error.localizedDescription) }
+    }
+  }
+}
+
+// Reference photos are immutable files, not multi-megabyte strings in every
+// bridge update/checkpoint. imageRef survives app-container relocation; uri is
+// resolved to the current container when a document opens.
+enum CraftoonReferenceImageStore {
+  private static func folder() throws -> URL {
+    let root = try FileManager.default.url(for: .applicationSupportDirectory,
+      in: .userDomainMask, appropriateFor: nil, create: true)
+    let directory = root.appendingPathComponent("CraftoonReferenceImages", isDirectory: true)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    return directory
+  }
+
+  static func url(_ reference: String) throws -> URL {
+    guard reference.range(of: "^[0-9a-f]{64}\\.(png|jpg)$", options: .regularExpression) != nil else {
+      throw NSError(domain: "CraftoonImage", code: 1, userInfo: [NSLocalizedDescriptionKey: "Invalid reference image."])
+    }
+    return try folder().appendingPathComponent(reference)
+  }
+
+  static func store(_ data: Data, mime: String) throws -> [String: Any] {
+    let hash = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    let reference = hash + (mime == "image/png" ? ".png" : ".jpg")
+    let destination = try url(reference)
+    if !FileManager.default.fileExists(atPath: destination.path) {
+      try data.write(to: destination, options: .atomic)
+    }
+    return ["uri": destination.absoluteString, "imageRef": reference]
+  }
+
+  private static func compactImage(_ image: [String: Any]) throws -> [String: Any] {
+    var image = image
+    if let reference = image["imageRef"] as? String {
+      let resolved = try url(reference)
+      guard FileManager.default.fileExists(atPath: resolved.path) else {
+        throw NSError(domain: "CraftoonImage", code: 2, userInfo: [NSLocalizedDescriptionKey: "A reference photo could not be found. The previous document is preserved."])
+      }
+      image["uri"] = resolved.absoluteString
+    } else if let uri = image["uri"] as? String, uri.hasPrefix("data:image/") {
+      let parts = uri.split(separator: ",", maxSplits: 1)
+      guard parts.count == 2, parts[0].contains(";base64"), let data = Data(base64Encoded: String(parts[1])),
+            CGImageSourceCreateWithData(data as CFData, nil) != nil else {
+        throw NSError(domain: "CraftoonImage", code: 3, userInfo: [NSLocalizedDescriptionKey: "A reference photo could not be read. The previous document is preserved."])
+      }
+      let stored = try store(data, mime: parts[0].contains("image/png") ? "image/png" : "image/jpeg")
+      image.merge(stored) { _, new in new }
+    }
+    return image
+  }
+
+  static func compact(_ source: [String: Any]) throws -> [String: Any] {
+    var document = source
+    var pages = document["pages"] as? [[String: Any]] ?? []
+    for pageIndex in pages.indices {
+      if let image = pages[pageIndex]["tracingImage"] as? [String: Any] {
+        pages[pageIndex]["tracingImage"] = try compactImage(image)
+      }
+      var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
+      for index in panels.indices {
+        if let image = panels[index]["tracingImage"] as? [String: Any] {
+          panels[index]["tracingImage"] = try compactImage(image)
+        }
+      }
+      pages[pageIndex]["panels"] = panels
+    }
+    document["pages"] = pages
+    return document
+  }
 }
