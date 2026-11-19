@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import SplashScreen from './src/SplashScreen';
 import { ProProvider, usePro } from './src/access/ProProvider';
-import { canAddPage } from './src/access/accessPolicy';
+import { canAddPage, canSaveStory, FREE_PAGE_LIMIT } from './src/access/accessPolicy';
 import { ComicReader } from './src/components/ComicReader';
 import LibraryScreen from './src/LibraryScreen';
 import { storyLibrary, SavedStory } from './src/services/storyLibrary';
@@ -19,6 +19,8 @@ import { CanvasOrientationPicker, CanvasPickerAnchor } from './src/components/Ca
 import { canvasSizeFor, CanvasOrientation, pageCanvasSize, pageOrientation } from './src/utils/canvasFormat';
 import { lockCanvasOrientation } from './src/services/canvasOrientation';
 import { sameComicPages } from './src/utils/comicContent';
+import { neighboringHandleSide } from './src/utils/panelGeometry';
+import { mergeGeometryInk } from './src/utils/geometryInkHistory';
 import { boundHistory } from './src/utils/historyBudget';
 import { SaveComicDialog } from './src/components/SaveComicDialog';
 import { Header } from './src/components/Header';
@@ -77,7 +79,13 @@ function CraftoonApp(): React.JSX.Element {
   const handleSheetBoundsChange = useCallback((bounds: { width: number; height: number }) => {
     canvasBoundsRef.current = bounds;
     setPages(previous => previous.map((page, index) => {
-      if (index !== currentPageIndex || page.canvasSize) { return page; }
+      if (index !== currentPageIndex) { return page; }
+      const stored = page.canvasSize;
+      if (stored) {
+        const expandsWidth = pageOrientation(page) === 'landscape' && bounds.width > stored.width && bounds.height === stored.height;
+        const expandsHeight = pageOrientation(page) === 'portrait' && bounds.height > stored.height && bounds.width === stored.width;
+        if (!expandsWidth && !expandsHeight) { return page; }
+      }
       return { ...page, canvasSize: bounds, orientation: pageOrientation(page) };
     }));
   }, [currentPageIndex]);
@@ -101,6 +109,7 @@ function CraftoonApp(): React.JSX.Element {
   const submittingNameRef = useRef(false);
   const hasSavedStoryRef = useRef(false);
   const newAfterSaveRef = useRef(false);
+  const layoutAfterSaveRef = useRef<(() => void) | null>(null);
   const hasCanvasSessionRef = useRef(false);
   const editRevisionRef = useRef(0);
   const savedRevisionRef = useRef(0);
@@ -160,6 +169,11 @@ function CraftoonApp(): React.JSX.Element {
         // Older native development builds may not have the recovery bridge yet.
         const draft = await storyLibrary.loadDraft?.();
         if (!active || !draft?.pages.length) { return; }
+        // Choosing a format or adding empty pages creates a checkpoint too.
+        // Resume only actual work; leave empty unnamed sessions at the splash.
+        const hasWork = draft.pages.some(page => page.panels.length > 0 || page.bubbles.length > 0 ||
+          !!page.stickers?.length || !!page.tracingImage);
+        if (!draft.isSaved && !hasWork) { return; }
         if (draft.isSaved) {
           try {
             const saved = await storyLibrary.loadStory(draft.id);
@@ -213,8 +227,20 @@ function CraftoonApp(): React.JSX.Element {
     return () => { active = false; };
   }, [recoveryReady, storyId, storyTitle, pages, currentPageIndex]);
 
+  const ensureSaveAllowed = async (mode: 'canvas' | 'library' = 'canvas') => {
+    if (!isPro && pages.length > FREE_PAGE_LIMIT) { requirePro('pages', mode); return false; }
+    if (isPro || hasSavedStoryRef.current) { return true; }
+    try {
+      const saved = await storyLibrary.listStories();
+      if (canSaveStory(isPro, saved.length, saved.some(item => item.id === storyId))) { return true; }
+      requirePro('save', mode);
+    } catch {
+      Alert.alert('Could not check Library', 'Your comic is still open. Please try saving again.');
+    }
+    return false;
+  };
+
   const persistStory = useCallback(async (title = storyTitle, items = pages) => {
-    if (!isPro) { throw new Error('Craftoon Pro is required for Library saving.'); }
     const revision = editRevisionRef.current;
     await storyLibrary.saveStory({
       id: storyId, title, pages: items, updatedAt: new Date().toISOString(),
@@ -222,10 +248,10 @@ function CraftoonApp(): React.JSX.Element {
     hasSavedStoryRef.current = true;
     savedRevisionRef.current = revision;
     setStoryTitle(title);
-  }, [storyId, storyTitle, pages, isPro]);
+  }, [storyId, storyTitle, pages]);
 
   useEffect(() => {
-    if (!isPro || saveDialogVisible || currentScreen !== 'editor' || !hasSavedStoryRef.current ||
+    if ((!isPro && pages.length > FREE_PAGE_LIMIT) || saveDialogVisible || currentScreen !== 'editor' || !hasSavedStoryRef.current ||
         editRevisionRef.current === savedRevisionRef.current) { return; }
     let timer: ReturnType<typeof setTimeout>;
     const save = () => {
@@ -239,9 +265,10 @@ function CraftoonApp(): React.JSX.Element {
     return () => clearTimeout(timer);
   }, [pages, currentScreen, persistStory, saveDialogVisible, isPro]);
 
-  const handleSaveStory = () => {
+  const handleSaveStory = async () => {
     if (savingRef.current) { return; }
-    if (!requirePro('save', 'canvas')) { return; }
+    savingRef.current = true;
+    if (!await ensureSaveAllowed()) { savingRef.current = false; return; }
     if (hasSavedStoryRef.current) {
       savingRef.current = true;
       if (saveFeedbackTimer.current) { clearTimeout(saveFeedbackTimer.current); }
@@ -267,20 +294,24 @@ function CraftoonApp(): React.JSX.Element {
     Keyboard.dismiss();
     setSaveDialogVisible(false);
     newAfterSaveRef.current = false;
+    layoutAfterSaveRef.current = null;
     savingRef.current = false;
   };
 
   const confirmSaveName = async () => {
     if (submittingNameRef.current) { return; }
-    if (!requirePro('save', 'canvas')) { return; }
     submittingNameRef.current = true;
     setSubmittingName(true);
     setSaveError(null);
     Keyboard.dismiss();
     try {
+      if (!await ensureSaveAllowed()) { return; }
       await persistStory(saveName.trim() || 'Untitled comic');
       setSaveDialogVisible(false);
       savingRef.current = false;
+      const applyLayout = layoutAfterSaveRef.current;
+      layoutAfterSaveRef.current = null;
+      if (applyLayout) { applyLayout(); }
       if (newAfterSaveRef.current) {
         newAfterSaveRef.current = false;
         setFormatPicker('new');
@@ -306,7 +337,7 @@ function CraftoonApp(): React.JSX.Element {
           editRevisionRef.current += 1;
         }
         setPages(captured);
-        if (hasSavedStoryRef.current && isPro) { await persistStory(storyTitle, captured); }
+        if (hasSavedStoryRef.current && (isPro || pages.length <= FREE_PAGE_LIMIT)) { await persistStory(storyTitle, captured); }
       }
       setPreviewStory(null);
       setCurrentScreen('library');
@@ -329,7 +360,7 @@ function CraftoonApp(): React.JSX.Element {
       }
       if (mode === 'editor' && hasCanvasSessionRef.current &&
           editRevisionRef.current !== savedRevisionRef.current) {
-        if (hasSavedStoryRef.current && isPro) {
+        if (hasSavedStoryRef.current && (isPro || pages.length <= FREE_PAGE_LIMIT)) {
           await persistStory();
         } else {
           const choice = await new Promise<'save' | 'discard' | 'cancel'>(resolve => {
@@ -342,7 +373,7 @@ function CraftoonApp(): React.JSX.Element {
           });
           if (choice === 'cancel') { return; }
           if (choice === 'save') {
-            if (!requirePro('save', 'library')) { return; }
+            if (!await ensureSaveAllowed('library')) { return; }
             try { await persistStory(); } catch {
               Alert.alert('Could not save', 'Your current comic is still available. Please try again.');
               return;
@@ -466,32 +497,96 @@ function CraftoonApp(): React.JSX.Element {
   };
 
   // 사용자가 드래그해서 칸을 그렸을 때 패널 추가
-  const handleAddPanel = (rect: { x: number; y: number; width: number; height: number }) => {
+  const handleAddPanel = (rect: Pick<ComicPanel, 'x' | 'y' | 'width' | 'height' | 'corners'>) => {
     const newPanel: ComicPanel = {
       id: `panel-${Date.now()}`,
+      layoutSource: 'manual',
       ...rect,
     };
+    newPanel.adjustmentSide = neighboringHandleSide(newPanel, currentPage.panels);
     newPanel.tracingImage = legacyPanelReference(currentPage, newPanel);
     setPanelsWithHistory([...currentPage.panels, newPanel]);
     // 박스를 생성하면 레이아웃 모드를 유지하여 크기/위치 조절 가능
     setPanelModes({ [newPanel.id]: 'layout' });
   };
 
-  const handleCreateLayout = (columns: number, rows: number) => {
+  const handleCreateLayout = async (columns: number, rows: number) => {
+    if (savingRef.current) { return; }
     const addingPage = currentPage.panels.length > 0 || currentPage.bubbles.length > 0;
     if (addingPage && !canAddPage(isPro, pages.length)) { requirePro('pages', 'canvas'); return; }
     const bounds = pageCanvasSize(addingPage ? pages[0] : currentPage);
     const prefix = `panel-grid-${Date.now()}`;
     const panels = createPanelGrid(columns, rows, bounds, prefix);
     if (!panels.length) { return; }
-    if (currentPage.panels.length || currentPage.bubbles.length) {
-      const page: ComicPage = { id: `page-${Date.now()}`, panels, bubbles: [], canvasSize: bounds, orientation: pageOrientation(pages[0]) };
-      changePages([...pages, page], pages.length);
-    } else {
-      setPanelsWithHistory(panels);
-    }
+    savingRef.current = true;
+    let awaitingChoice = false;
     setPanelModes({});
-    setCurrentTool('panel');
+    try {
+      // Include the latest native strokes before offering to save the old layout.
+      const captured = await storyLibrary.capturePages(latestPages.current);
+      setPages(captured);
+      const applyLayout = () => {
+        if (addingPage) {
+          const page: ComicPage = { id: `page-${Date.now()}`, panels, bubbles: [], canvasSize: bounds, orientation: pageOrientation(captured[0]) };
+          changePages([...captured, page], captured.length, captured);
+        } else {
+          changePages(captured.map((page, index) => index === currentPageIndex
+            ? migrateTracingPage({ ...page, panels }) : page), currentPageIndex, captured);
+        }
+        setPanelModes({});
+        setCurrentTool('panel');
+      };
+      const hasWork = captured.some(page => page.bubbles.length > 0 || !!page.stickers?.length ||
+        !!page.tracingImage || page.panels.some(panel =>
+          // Older template panels predate layoutSource but have a dedicated ID prefix.
+          (panel.layoutSource ?? (panel.id.startsWith('panel-grid-') ? 'template' : 'manual')) === 'manual' ||
+          !!panel.tracingImage ||
+          (panel.drawingHasStrokes ?? !!panel.drawingData)));
+      const hasUnsavedChanges = !hasSavedStoryRef.current ||
+        editRevisionRef.current !== savedRevisionRef.current || !sameComicPages(captured, pages);
+      if (!hasWork || !hasUnsavedChanges) { applyLayout(); return; }
+      awaitingChoice = true;
+      Alert.alert('Save current comic?', 'Save your current comic before applying a layout template?', [
+        { text: 'Cancel', style: 'cancel', onPress: () => { savingRef.current = false; } },
+        { text: "Don't Save", style: 'destructive', onPress: () => {
+          applyLayout();
+          savingRef.current = false;
+        } },
+        { text: 'Save', onPress: async () => {
+          if (!await ensureSaveAllowed()) { savingRef.current = false; return; }
+          layoutAfterSaveRef.current = applyLayout;
+          setSaveName(storyTitle);
+          setSaveError(null);
+          setSaveDialogVisible(true);
+        } },
+      ], { cancelable: false });
+    } catch {
+      Alert.alert('Could not apply template', 'Your current comic is still open. Please try again.');
+    } finally { if (!awaitingChoice) { savingRef.current = false; } }
+  };
+
+  const handleCommitPanelGeometry = async (id: string, updates: Partial<ComicPanel>) => {
+    const targetId = currentPage.id;
+    try {
+      // Local drag previews have not transformed ink yet. Capture the original
+      // native strokes so Undo restores both geometry and artwork together.
+      const captured = await storyLibrary.capturePages(latestPages.current);
+      if (targetId !== activePageId.current) { return; }
+      const target = captured.find(page => page.id === targetId)?.panels.find(panel => panel.id === id);
+      if (!target) { return; }
+      changePages(captured.map(page => page.id === targetId ? { ...page,
+        panels: [...page.panels.filter(panel => panel.id !== id), { ...target, ...updates }],
+      } : page), currentPageIndex, captured);
+    } catch {
+      Alert.alert('Could not update panel', 'Your drawing is preserved. Please try again.');
+    }
+  };
+  const handleGeometryInkChange = (id: string, drawingData: string, geometry: import('./src/types/comic').PanelInkGeometry) => {
+    setPages(previous => mergeGeometryInk(previous, id, drawingData, geometry));
+    setHistory(previous => previous.map(entry => {
+      const items = mergeGeometryInk(entry.pages, id, drawingData, geometry);
+      return items === entry.pages ? entry : { ...entry, pages: items };
+    }));
   };
 
   const handleUpdatePanel = (id: string, updates: Partial<ComicPanel>) => {
@@ -527,11 +622,11 @@ function CraftoonApp(): React.JSX.Element {
     setPanelModes({ [id]: mode });
   };
 
-  // 다른 박스를 클릭해도 일단 레이아웃 모드가 먼저 작동!
+  // A single tap resumes drawing; Layout is an explicit mode-button choice.
   const handlePanelSelect = (id: string) => {
     setEditingTracingPanelId(null);
     bringPanelToFront(id);
-    setPanelModes({ [id]: 'layout' });
+    setPanelModes({ [id]: 'draw' });
   };
 
   const handleBackgroundTap = () => {
@@ -596,8 +691,8 @@ function CraftoonApp(): React.JSX.Element {
     try {
       const captured = await storyLibrary.capturePages(pages);
       setPages(captured);
-      const hasWork = hasCanvasSessionRef.current && (captured.length > 1 || captured.some(page =>
-        page.panels.length > 0 || page.bubbles.length > 0));
+      const hasWork = hasCanvasSessionRef.current && captured.some(page =>
+        page.panels.length > 0 || page.bubbles.length > 0 || !!page.stickers?.length || !!page.tracingImage);
       const hasUnsavedChanges = !hasSavedStoryRef.current ||
         editRevisionRef.current !== savedRevisionRef.current || !sameComicPages(captured, pages);
       if (!hasWork || !hasUnsavedChanges) { setFormatPicker(kind); return; }
@@ -608,8 +703,8 @@ function CraftoonApp(): React.JSX.Element {
           handleNewStory(captured, pageOrientation(captured[0]));
           setFormatPicker('reset');
         } },
-        { text: 'Save', onPress: () => {
-          if (!requirePro('save', 'canvas')) { return; }
+        { text: 'Save', onPress: async () => {
+          if (!await ensureSaveAllowed()) { return; }
           savingRef.current = true;
           newAfterSaveRef.current = true;
           setSaveName(storyTitle);
@@ -681,9 +776,7 @@ function CraftoonApp(): React.JSX.Element {
 
   const handleAddPage = () => insertPage(currentPageIndex + 1);
 
-  const handleDeletePage = async () => {
-    if (savingRef.current) { return; }
-    savingRef.current = true;
+  const deleteCurrentPage = async () => {
     try {
       // Capture the deleted page too, so Undo restores its latest native ink.
       const captured = await storyLibrary.capturePages(pages);
@@ -700,6 +793,24 @@ function CraftoonApp(): React.JSX.Element {
     } catch {
       Alert.alert('Could not delete page', 'Your current page is still open. Please try again.');
     } finally { savingRef.current = false; }
+  };
+
+  const handleDeletePage = () => {
+    if (savingRef.current) { return; }
+    savingRef.current = true;
+    let decided = false;
+    Alert.alert('Delete page?', `Delete page ${currentPageIndex + 1}? You can restore it with Undo.`, [
+      { text: 'Cancel', style: 'cancel', onPress: () => {
+        if (decided) { return; }
+        decided = true;
+        savingRef.current = false;
+      } },
+      { text: 'Delete', style: 'destructive', onPress: () => {
+        if (decided) { return; }
+        decided = true;
+        return deleteCurrentPage();
+      } },
+    ], { cancelable: false });
   };
 
   const handlePrevPage = () => {
@@ -733,7 +844,7 @@ function CraftoonApp(): React.JSX.Element {
 
   const wrap = (content: React.ReactNode) => <View style={styles.workspaceWrapper}>
     {content}
-    <CanvasOrientationPicker anchor={formatAnchorRef.current} visible={formatPicker !== null} onSelect={selectFormat} onCancel={() => { formatAnchorRef.current = undefined; setFormatPicker(null); }} />
+    <CanvasOrientationPicker anchor={formatAnchorRef.current} placement={currentScreen === 'splash' ? 'adaptive' : 'below'} visible={formatPicker !== null} onSelect={selectFormat} onCancel={() => { formatAnchorRef.current = undefined; setFormatPicker(null); }} />
   </View>;
 
   const handleEmail = async () => {
@@ -827,6 +938,8 @@ function CraftoonApp(): React.JSX.Element {
             currentTool={currentTool}
             onAddPanel={handleAddPanel}
             onUpdatePanel={handleUpdatePanel}
+            onCommitPanelGeometry={handleCommitPanelGeometry}
+            onGeometryInkChange={handleGeometryInkChange}
             onDeletePanel={handleDeletePanel}
             onModeChange={handlePanelModeChange}
             onPanelSelect={handlePanelSelect}

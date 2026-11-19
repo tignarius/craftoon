@@ -3,7 +3,107 @@ import PencilKit
 import React
 import UIKit.UIGestureRecognizerSubclass
 
-class RNPencilKitView: UIView, PKCanvasViewDelegate {
+// Explicitly opt in at launch; no profiler connection or per-stroke logging.
+enum CraftoonPanelPerformance {
+  static let paletteEnabled = ProcessInfo.processInfo.arguments.contains("--craftoon-measure-palette")
+  static let enabled = paletteEnabled || ProcessInfo.processInfo.arguments.contains("--craftoon-measure-panels")
+  private static let queue = DispatchQueue(label: "com.craftoon.panel-timing", qos: .utility)
+  private static let session = UUID().uuidString
+  static func now() -> Double { Date().timeIntervalSince1970 * 1000 }
+  static func write(_ values: [String: Any]) {
+    guard enabled else { return }
+    var record = values
+    record["session"] = session
+    record["recordedAtMs"] = now()
+    let event = record
+    queue.async {
+      do {
+        let root = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let url = root.appendingPathComponent("CraftoonPanelPerformance.jsonl")
+        var bytes = try JSONSerialization.data(withJSONObject: event, options: [.sortedKeys])
+        bytes.append(10)
+        if !FileManager.default.fileExists(atPath: url.path) { try bytes.write(to: url, options: .atomic); return }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        if try handle.seekToEnd() > 5_000_000 { try handle.truncate(atOffset: 0); try handle.seek(toOffset: 0) }
+        try handle.write(contentsOf: bytes)
+      } catch { NSLog("Panel timing log failed: %@", error.localizedDescription) }
+    }
+  }
+}
+
+private enum CraftoonResponderSnapshot {
+  static weak var responder: UIResponder?
+}
+private extension UIResponder {
+  @objc func craftoonRecordFirstResponder(_ sender: Any?) { CraftoonResponderSnapshot.responder = self }
+}
+
+// Panel edges have horizontal tops/bottoms. Map a point's relative position
+// between its two sloping sides into the new panel, keeping editable strokes.
+enum CraftoonInkShapeWarp {
+  static func point(_ p: CGPoint, from old: [CGPoint], to next: [CGPoint]) -> CGPoint {
+    guard old.count == 4, next.count == 4 else { return p }
+    let height = old[3].y - old[0].y
+    guard abs(height) > 0.001 else { return p }
+    let v = (p.y - old[0].y) / height
+    let left = old[0].x + (old[3].x - old[0].x) * v
+    let right = old[1].x + (old[2].x - old[1].x) * v
+    guard abs(right - left) > 0.001 else { return p }
+    let u = (p.x - left) / (right - left)
+    let newLeft = next[0].x + (next[3].x - next[0].x) * v
+    let newRight = next[1].x + (next[2].x - next[1].x) * v
+    return CGPoint(x: newLeft + (newRight - newLeft) * u,
+                   y: next[0].y + (next[3].y - next[0].y) * v)
+  }
+
+  static func drawing(_ drawing: PKDrawing, from old: [CGPoint], to next: [CGPoint]) -> PKDrawing {
+    guard old != next, !drawing.strokes.isEmpty else { return drawing }
+    let strokes = drawing.strokes.map { stroke -> PKStroke in
+      let map: (CGPoint) -> CGPoint = { point($0.applying(stroke.transform), from: old, to: next) }
+      let controlPoints = stroke.path.map { sample -> PKStrokePoint in
+        let location = map(sample.location)
+        let horizontal = map(CGPoint(x: sample.location.x + sample.size.width, y: sample.location.y))
+        let vertical = map(CGPoint(x: sample.location.x, y: sample.location.y + sample.size.height))
+        let size = CGSize(width: hypot(horizontal.x - location.x, horizontal.y - location.y),
+                          height: hypot(vertical.x - location.x, vertical.y - location.y))
+        if #available(iOS 17.0, *) {
+          return PKStrokePoint(location: location, timeOffset: sample.timeOffset, size: size,
+            opacity: sample.opacity, force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude,
+            secondaryScale: sample.secondaryScale)
+        }
+        return PKStrokePoint(location: location, timeOffset: sample.timeOffset, size: size,
+          opacity: sample.opacity, force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude)
+      }
+      let path = PKStrokePath(controlPoints: controlPoints, creationDate: stroke.path.creationDate)
+      // Bitmap-eraser masks are pre-transform paths. Move them with the ink
+      // so reshaping never brings back previously erased portions.
+      let mask = stroke.mask.map { source -> UIBezierPath in
+        let result = UIBezierPath()
+        result.usesEvenOddFillRule = source.usesEvenOddFillRule
+        source.cgPath.applyWithBlock { pointer in
+          let element = pointer.pointee
+          switch element.type {
+          case .moveToPoint: result.move(to: map(element.points[0]))
+          case .addLineToPoint: result.addLine(to: map(element.points[0]))
+          case .addQuadCurveToPoint: result.addQuadCurve(to: map(element.points[1]), controlPoint: map(element.points[0]))
+          case .addCurveToPoint: result.addCurve(to: map(element.points[2]), controlPoint1: map(element.points[0]), controlPoint2: map(element.points[1]))
+          case .closeSubpath: result.close()
+          @unknown default: break
+          }
+        }
+        return result
+      }
+      if #available(iOS 16.0, *) {
+        return PKStroke(ink: stroke.ink, path: path, transform: .identity, mask: mask, randomSeed: stroke.randomSeed)
+      }
+      return PKStroke(ink: stroke.ink, path: path, transform: .identity, mask: mask)
+    }
+    return PKDrawing(strokes: strokes)
+  }
+}
+
+class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
 
   // Keep the latest native drawing when a panel unmounts during page navigation.
   static var drawingCache: [String: PKDrawing] = [:]
@@ -23,9 +123,14 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     }
   }
 
-  static func restoreVisibleDrawings() {
+  static func restoreVisibleDrawings(_ pages: [[String: Any]]? = nil) {
     for view in views.allObjects where CraftoonInkStore.documentPanelIDs?.contains(view.panelId) == true {
       view.liveCanvas?.undoManager?.removeAllActions()
+      if let target = pages?.flatMap({ $0["panels"] as? [[String: Any]] ?? [] }).first(where: { $0["id"] as? String == view.panelId }),
+         let x = target["x"] as? NSNumber, let width = target["width"] as? NSNumber, let height = target["height"] as? NSNumber {
+        view.restoredShapeFrame = (x: CGFloat(truncating: x), width: CGFloat(truncating: width) - 4,
+          height: CGFloat(truncating: height) - 4, revision: (target["shapeRevision"] as? NSNumber)?.intValue ?? 0, preview: false)
+      }
       let value = CraftoonInkStore.latestReferences[view.panelId] ?? ""
       if view.liveCanvas == nil, !view.isDrawingActive {
         view.previewKey = nil
@@ -40,15 +145,199 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   private static var sharedToolPicker: PKToolPicker? = {
     if #available(iOS 14.0, *) {
       let picker = PKToolPicker()
+      if #available(iOS 18.0, *) {
+        picker.accessoryItem = nil
+        for case let item as PKToolPickerInkingItem in picker.toolItems {
+          item.allowsColorSelection = true
+        }
+      }
       picker.overrideUserInterfaceStyle = .light
       picker.colorUserInterfaceStyle = .light
       return picker
     }
     return nil
   }()
+  private weak var paletteCanvas: PKCanvasView?
+  private var registeredToolPicker: PKToolPicker?
+  private static var lastPaletteState: Data?
+  private static let paletteDiagnosticsStarted: Void = {
+    guard CraftoonPanelPerformance.paletteEnabled else { return }
+    CraftoonPanelPerformance.write(["stage": "palette_diagnostics_started"])
+    schedulePaletteProbe()
+  }()
+
+  private static func schedulePaletteProbe() {
+    // Only one probe can be outstanding. A busy main thread cannot build a
+    // backlog of diagnostics, and no profiler or input recognizer is attached.
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.25) {
+      let start = CraftoonPanelPerformance.now()
+      DispatchQueue.main.async {
+        reportPaletteState("palette_state", lag: CraftoonPanelPerformance.now() - start)
+        schedulePaletteProbe()
+      }
+    }
+  }
+
+  private static func reportPaletteState(_ stage: String, lag: Double = 0) {
+    guard CraftoonPanelPerformance.paletteEnabled else { return }
+    CraftoonResponderSnapshot.responder = nil
+    UIApplication.shared.sendAction(#selector(UIResponder.craftoonRecordFirstResponder(_:)), to: nil, from: nil, for: nil)
+    let active = views.allObjects.filter { $0.isDrawingActive && $0.window != nil }
+    var values: [String: Any] = [
+      "appState": UIApplication.shared.applicationState.rawValue,
+      "firstResponderClass": CraftoonResponderSnapshot.responder.map { String(describing: type(of: $0)) } ?? "none",
+      "paletteVisible": active.first?.registeredToolPicker?.isVisible ?? false,
+      "activeCanvases": active.map { view -> [String: Any] in
+        ["panel": view.panelId, "registered": view.paletteCanvas != nil,
+         "canvasFirstResponder": view.liveCanvas?.isFirstResponder ?? false,
+         "canvasInteractive": view.liveCanvas?.isUserInteractionEnabled ?? false]
+      }.sorted { ($0["panel"] as? String ?? "") < ($1["panel"] as? String ?? "") },
+    ]
+    let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap { $0.windows }
+    values["presentations"] = windows.compactMap { window -> [String: Any]? in
+      guard !window.isHidden, var controller = window.rootViewController else { return nil }
+      while let next = controller.presentedViewController { controller = next }
+      return ["class": String(describing: type(of: controller)), "keyWindow": window.isKeyWindow,
+              "presenting": controller.isBeingPresented, "dismissing": controller.isBeingDismissed,
+              "transition": controller.transitionCoordinator != nil]
+    }
+    let signature = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys])
+    guard stage != "palette_state" || signature != lastPaletteState || lag > 100 else { return }
+    lastPaletteState = signature
+    values["stage"] = stage
+    values["mainQueueDelayMs"] = lag
+    CraftoonPanelPerformance.write(values)
+  }
+
+  func toolPickerVisibilityDidChange(_ toolPicker: PKToolPicker) { Self.reportPaletteState("palette_visibility") }
+  func toolPickerFramesObscuredDidChange(_ toolPicker: PKToolPicker) { Self.reportPaletteState("palette_frame") }
+  func toolPickerSelectedToolDidChange(_ toolPicker: PKToolPicker) { Self.reportPaletteState("palette_tool") }
+
+  private func attachToolPicker(to canvas: PKCanvasView) {
+    // A color/width popover may temporarily own first responder. That does
+    // not mean this drawing canvas needs to register again or reclaim focus.
+    guard paletteCanvas !== canvas else { return }
+    if let previous = paletteCanvas { detachToolPicker(from: previous) }
+    let picker: PKToolPicker?
+    if #available(iOS 19.0, *) {
+      picker = Self.sharedToolPicker
+    } else if #available(iOS 18.0, *), let window = canvas.window {
+      // iPadOS 18 compatibility: associate the native palette with the actual
+      // drawing window. Keep newer systems on the current initializer.
+      picker = PKToolPicker.shared(for: window) ?? Self.sharedToolPicker
+      picker?.overrideUserInterfaceStyle = .light
+      picker?.colorUserInterfaceStyle = .light
+      picker?.accessoryItem = nil
+      if let picker {
+        for case let item as PKToolPickerInkingItem in picker.toolItems {
+          item.allowsColorSelection = true
+        }
+      }
+    } else {
+      picker = Self.sharedToolPicker
+    }
+    paletteCanvas = canvas
+    registeredToolPicker = picker
+    picker?.addObserver(canvas)
+    if CraftoonPanelPerformance.paletteEnabled { picker?.addObserver(self) }
+    if drawingTool == "pen", let selected = picker?.selectedTool { canvas.tool = selected }
+    picker?.setVisible(true, forFirstResponder: canvas)
+    canvas.becomeFirstResponder()
+    Self.reportPaletteState("palette_attach")
+  }
+
+  private func detachToolPicker(from canvas: PKCanvasView) {
+    guard paletteCanvas === canvas else { return }
+    let picker = registeredToolPicker
+    paletteCanvas = nil
+    registeredToolPicker = nil
+    picker?.removeObserver(canvas)
+    if CraftoonPanelPerformance.paletteEnabled { picker?.removeObserver(self) }
+    // Unregister even while a popover owns focus. setVisible(false) removes
+    // this responder's subscription; it does not unregister another panel.
+    picker?.setVisible(false, forFirstResponder: canvas)
+    if canvas.isFirstResponder { canvas.resignFirstResponder() }
+    Self.reportPaletteState("palette_detach")
+  }
+
+  @objc var selectionTimestamp: Double = 0 { didSet {
+    if CraftoonPanelPerformance.enabled, selectionTimestamp != oldValue, isDrawingActive { reportPanelTiming("selection_received") }
+  } }
+  private var activationStartedMs: Double = 0
+  private var nativeReadyMs: Double = 0
+  private var firstRenderMs: Double = 0
+  private var activationMeasurements: [String: Any] = [:]
+  private func reportPanelTiming(_ stage: String) {
+    guard CraftoonPanelPerformance.enabled, activationStartedMs > 0 else { return }
+    var values = activationMeasurements
+    values["stage"] = stage
+    values["panel"] = panelId
+    values["activationAtMs"] = activationStartedMs
+    values["selectionAtMs"] = selectionTimestamp
+    values["nativeReadyAtMs"] = nativeReadyMs
+    values["firstRenderAtMs"] = firstRenderMs
+    values["width"] = bounds.width
+    values["height"] = bounds.height
+    CraftoonPanelPerformance.write(values)
+  }
 
   private var liveCanvas: PKCanvasView?
+  // The React panel still positions/scales its controls and reference image.
+  // Cancel that scale for the ink viewport, then zoom PencilKit's content so
+  // it renders new tiles at the displayed size without modifying PKDrawing.
+  @objc var renderScale: Double = 1 { didSet { if renderScale != oldValue { setNeedsLayout() } } }
+  private var inkRenderScale: CGFloat {
+    renderScale.isFinite ? max(1, CGFloat(renderScale)) : 1
+  }
+
+  private func layoutInkCanvas(_ canvas: PKCanvasView) {
+    let scale = inkRenderScale
+    let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+    let transform = CGAffineTransform(scaleX: 1 / scale, y: 1 / scale)
+    if canvas.transform != transform { canvas.transform = transform }
+    if canvas.bounds.size != size { canvas.bounds.size = size }
+    let center = CGPoint(x: bounds.midX, y: bounds.midY)
+    if canvas.center != center { canvas.center = center }
+    if canvas.maximumZoomScale < scale { canvas.maximumZoomScale = scale }
+    if canvas.zoomScale != scale { canvas.setZoomScale(scale, animated: false) }
+    if canvas.contentSize != size { canvas.contentSize = size }
+    if canvas.contentOffset != .zero { canvas.contentOffset = .zero }
+    if canvas.pinchGestureRecognizer?.isEnabled == true { canvas.pinchGestureRecognizer?.isEnabled = false }
+  }
   private let previewView = UIImageView()
+  private let inkPolygonMask = CAShapeLayer()
+  private var maskedInkBounds: CGRect?
+  private var maskedInkPoints: [CGPoint] = []
+  @objc var polygonPoints: NSArray = [] { didSet { updateInkPolygonMask() } }
+
+  private func updateInkPolygonMask() {
+    let points = CraftoonPanelShape.points(polygonPoints)
+    guard maskedInkBounds != bounds || maskedInkPoints != points else { return }
+    maskedInkBounds = bounds
+    maskedInkPoints = points
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    if CraftoonPanelShape.isRectangle(points) {
+      // Rectangular panels already clip via clipsToBounds; avoid an extra
+      // offscreen compositing pass for their live renderer and preview.
+      layer.mask = nil
+    } else {
+      inkPolygonMask.frame = bounds
+      inkPolygonMask.path = CraftoonPanelShape.path(points, in: bounds).cgPath
+      layer.mask = inkPolygonMask
+    }
+    CATransaction.commit()
+  }
+
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    super.point(inside: point, with: event)
+      && CraftoonPanelShape.path(CraftoonPanelShape.points(polygonPoints), in: bounds).contains(point)
+  }
+
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard self.point(inside: point, with: event) else { return nil }
+    return super.hitTest(point, with: event)
+  }
   private weak var canvasAwaitingRender: PKCanvasView?
   private var detachWork: DispatchWorkItem?
   private var previewRevision = 0
@@ -60,10 +349,11 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   var canvasView: PKCanvasView {
     if let canvas = liveCanvas { return canvas }
+    let createStart = CraftoonPanelPerformance.enabled ? CraftoonPanelPerformance.now() : 0
     let canvas = makeCanvas()
+    if CraftoonPanelPerformance.enabled { activationMeasurements["createCanvasMs"] = CraftoonPanelPerformance.now() - createStart }
     liveCanvas = canvas
-    canvas.frame = bounds
-    canvas.contentSize = bounds.size
+    layoutInkCanvas(canvas)
     addSubview(canvas)
     // A new PencilKit renderer initially has no visible tiles. Keep the last
     // preview above it until its first completed render has been presented.
@@ -71,12 +361,19 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     previewView.isHidden = false
     bringSubviewToFront(previewView)
     installPointerInput()
-    let drawing = RNPencilKitView.drawingCache[panelId]
-      ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData)
-      ?? PKDrawing()
+    let decodeStart = CraftoonPanelPerformance.enabled ? CraftoonPanelPerformance.now() : 0
+    let cached = RNPencilKitView.drawingCache[panelId]
+    let drawing = cached ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
+    if CraftoonPanelPerformance.enabled {
+      activationMeasurements["drawingCached"] = cached != nil
+      activationMeasurements["decodeDrawingMs"] = CraftoonPanelPerformance.now() - decodeStart
+      activationMeasurements["strokeCount"] = drawing.strokes.count
+    }
+    let assignStart = CraftoonPanelPerformance.enabled ? CraftoonPanelPerformance.now() : 0
     isApplyingDrawing = true
     canvas.drawing = drawing
     isApplyingDrawing = false
+    if CraftoonPanelPerformance.enabled { activationMeasurements["assignDrawingMs"] = CraftoonPanelPerformance.now() - assignStart }
     RNPencilKitView.drawingCache[panelId] = drawing
     if inkSize == .zero { inkSize = bounds.size }
     return canvas
@@ -174,8 +471,15 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   private func setupView() {
     backgroundColor = .white
     clipsToBounds = true
+    // Mask the view that actually owns PencilKit's live renderer, the pointer
+    // stroke previews and the inactive image. Fabric may host React children
+    // outside the legacy PanelSurface view, so its outer mask is insufficient.
+    inkPolygonMask.fillColor = UIColor.black.cgColor
+    layer.mask = inkPolygonMask
+    updateInkPolygonMask()
     Self.views.add(self)
     _ = Self.memoryObserver
+    _ = Self.paletteDiagnosticsStarted
     previewView.isUserInteractionEnabled = false
     previewView.contentMode = .scaleToFill
     addSubview(previewView)
@@ -248,6 +552,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     preview.contentInsetAdjustmentBehavior = .never
     preview.contentSize = canvasView.bounds.size
     addSubview(preview)
+    layoutInkCanvas(preview)
     pointerPreview = preview
     pointerPreviewNeedsUpdate = false
     let displayLink = CADisplayLink(target: pointerDisplayTarget,
@@ -259,7 +564,9 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   private func appendPointerSamples(_ touches: [UITouch]) {
     guard pointerInk != nil else { return }
     for touch in touches {
-      let location = touch.location(in: canvasView)
+      let viewportLocation = touch.location(in: canvasView)
+      let location = CGPoint(x: viewportLocation.x / canvasView.zoomScale,
+                             y: viewportLocation.y / canvasView.zoomScale)
       let time = max(0, touch.timestamp - pointerStartTime)
       if let previous = pointerPoints.last, time <= previous.timeOffset { continue }
       pointerPoints.append(PKStrokePoint(
@@ -321,6 +628,10 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   func canvasViewDidFinishRendering(_ canvasView: PKCanvasView) {
     guard canvasView === liveCanvas else { return }
+    if CraftoonPanelPerformance.enabled, isDrawingActive, firstRenderMs == 0 {
+      firstRenderMs = CraftoonPanelPerformance.now()
+      reportPanelTiming("first_render")
+    }
     let renderedPreviews = committedPreviews
     // Defer the handoff to the next main turn so the newly rendered tiles and
     // overlay removal reach the compositor together. Ignore retired renderers.
@@ -342,6 +653,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   private var isUsingTool = false
   private var drawingRevision = 0
   private var lastEmittedDrawingData: String?
+  private var pendingGeometrySource: String?
   private var savedDrawingTool: PKTool?
 
   deinit {
@@ -349,7 +661,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     syncTimer?.invalidate()
     previewTimer?.invalidate()
     detachWork?.cancel()
-    if let canvas = liveCanvas { RNPencilKitView.sharedToolPicker?.removeObserver(canvas) }
+    if let canvas = paletteCanvas { detachToolPicker(from: canvas) }
     // Preserve a stroke even if React unmounts this panel before the sync event.
     if let drawing = liveCanvas?.drawing, !panelId.isEmpty,
        CraftoonInkStore.documentPanelIDs?.contains(panelId) != false {
@@ -368,7 +680,10 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     }
   }
 
-  private func applyDrawing(_ drawing: PKDrawing, reference: String? = nil) {
+  private func applyDrawing(_ drawing: PKDrawing, reference: String? = nil, geometryChange: Bool = false) {
+    if geometryChange {
+      if pendingGeometrySource == nil { pendingGeometrySource = drawingData }
+    } else { pendingGeometrySource = nil }
     syncTimer?.invalidate()
     drawingRevision += 1
     isApplyingDrawing = true
@@ -410,6 +725,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
     guard canvasView === liveCanvas else { return }
     guard !isApplyingDrawing else { return }
+    pendingGeometrySource = nil
     drawingRevision += 1
     if !panelId.isEmpty {
       RNPencilKitView.drawingCache[panelId] = canvasView.drawing
@@ -425,12 +741,22 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
 
   private func scheduleDrawingSync() {
     syncTimer?.invalidate()
-    let timer = Timer(timeInterval: 0.3, repeats: false) { [weak self] _ in
+    // Geometry commits happen once on release. Publish their ink immediately
+    // so a following pen stroke gets the completed geometry as its Undo base.
+    let delay: TimeInterval = pendingGeometrySource == nil ? 0.3 : 0
+    let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
       guard let self, !self.isUsingTool, !self.syncing,
             self.onDrawingChange != nil, !self.panelId.isEmpty else { return }
       let revision = self.drawingRevision
       let panelId = self.panelId
       let capture = CraftoonInkStore.capture([["panels": [["id": panelId]]]])
+      var geometry: [String: Any]?
+      if let source = self.pendingGeometrySource {
+        geometry = ["width": self.shapeFrame["width"] ?? self.bounds.width,
+                    "height": self.shapeFrame["height"] ?? self.bounds.height,
+                    "corners": self.shapeFrame["corners"] ?? [], "sourceDrawingData": source]
+      }
+      let geometryResult = geometry
       guard let reference = (capture.pages.first?["panels"] as? [[String: Any]])?.first?["drawingData"] as? String,
             reference != self.lastEmittedDrawingData else { return }
       self.syncing = true
@@ -446,7 +772,10 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
           }
           if case .failure(let error) = result { NSLog("Ink sync failed: %@", error.localizedDescription); return }
           self.lastEmittedDrawingData = reference
-          self.onDrawingChange?(["drawingData": reference])
+          self.pendingGeometrySource = nil
+          var event: [String: Any] = ["drawingData": reference]
+          if let geometryResult { event["geometry"] = geometryResult }
+          self.onDrawingChange?(event)
         }
       }
     }
@@ -454,14 +783,108 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     syncTimer = timer
   }
 
+  // Geometry previews may extend the panel's frame without resizing artwork.
+  // Track that separately from normal circle resizing and ordinary panel moves.
+  @objc var shapeFrame: NSDictionary = [:] { didSet { if !shapeFrame.isEqual(oldValue) { setNeedsLayout() } } }
+  private var appliedShapeFrame: (x: CGFloat, width: CGFloat, height: CGFloat, revision: Int, preview: Bool)?
+  private var restoredShapeFrame: (x: CGFloat, width: CGFloat, height: CGFloat, revision: Int, preview: Bool)?
+  private var appliedContentBounds: CGRect?
+  private var appliedInkCorners: [CGPoint]?
+
+  private var layoutPixelTolerance: CGFloat { 1 / (window?.screen.scale ?? UIScreen.main.scale) + 0.001 }
+
+  private func applyShapeFrameIfNeeded() -> Bool {
+    guard let xValue = shapeFrame["x"] as? NSNumber,
+          let widthValue = shapeFrame["width"] as? NSNumber,
+          let heightValue = shapeFrame["height"] as? NSNumber else { return false }
+    let next = (x: CGFloat(truncating: xValue), width: CGFloat(truncating: widthValue), height: CGFloat(truncating: heightValue),
+      revision: (shapeFrame["revision"] as? NSNumber)?.intValue ?? 0,
+      preview: (shapeFrame["preview"] as? NSNumber)?.boolValue ?? false)
+    let content = shapeFrame["contentBounds"] as? [String: NSNumber]
+    let nextContent = CGRect(x: content?["x"]?.doubleValue ?? 0, y: content?["y"]?.doubleValue ?? 0,
+      width: content?["width"]?.doubleValue ?? Double(next.width),
+      height: content?["height"]?.doubleValue ?? Double(next.height))
+    let nextCorners = CraftoonPanelShape.points(shapeFrame["corners"]).map {
+      CGPoint(x: $0.x * next.width, y: $0.y * next.height)
+    }
+    if let restored = restoredShapeFrame {
+      guard abs(next.x - restored.x) < 0.01, abs(next.width - restored.width) < 0.01,
+            abs(next.height - restored.height) < 0.01, next.revision == restored.revision,
+            abs(bounds.width - restored.width) <= layoutPixelTolerance,
+            abs(bounds.height - restored.height) <= layoutPixelTolerance else { return true }
+      // Undo/open already supplied ink archived in this coordinate frame.
+      appliedShapeFrame = restored
+      appliedContentBounds = nextContent
+      appliedInkCorners = nextCorners
+      restoredShapeFrame = nil
+      inkSize = bounds.size
+      return true
+    }
+    let previous = appliedShapeFrame
+    let reshaping = next.preview || previous?.preview == true || (previous != nil && previous?.revision != next.revision)
+    // Fabric can deliver frame/props in separate steps. Never scale the ink
+    // against an intermediate frame while a shape update is still pending.
+    // Yoga rounds native frames to device pixels. A 0.01-point comparison
+    // rejects ordinary fractional drags forever, skipping every ink update.
+    guard abs(bounds.width - next.width) <= layoutPixelTolerance,
+          abs(bounds.height - next.height) <= layoutPixelTolerance else { return true }
+    // Arrow drags preview only the border. Keep the original ink/geometry
+    // baseline and perform the expensive stroke warp once on release.
+    if next.preview, shapeFrame["warpInk"] != nil { return true }
+    appliedShapeFrame = next
+    let previousContent = appliedContentBounds
+    appliedContentBounds = nextContent
+    let previousCorners = appliedInkCorners
+    appliedInkCorners = nextCorners
+    if (shapeFrame["warpInk"] as? NSNumber)?.boolValue == true,
+       previous != nil, let previousCorners, previousCorners != nextCorners {
+      let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
+        ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
+      applyDrawing(CraftoonInkShapeWarp.drawing(drawing, from: previousCorners, to: nextCorners), geometryChange: true)
+      scheduleDrawingSync()
+      CraftoonDraftRecovery.shared.scheduleSave()
+      return true
+    }
+    if (shapeFrame["resizeInk"] as? NSNumber)?.boolValue == true,
+       previous != nil, let previousContent, previousContent.width > 0, previousContent.height > 0 {
+      // A circle resizes the visible polygon, which can shrink entirely
+      // inside a retained ink frame. Frame dimensions alone cannot detect it.
+      guard previousContent != nextContent else { return true }
+      let sx = nextContent.width / previousContent.width, sy = nextContent.height / previousContent.height
+      let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
+        ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
+      let transform = CGAffineTransform(a: sx, b: 0, c: 0, d: sy,
+        tx: nextContent.minX - previousContent.minX * sx,
+        ty: nextContent.minY - previousContent.minY * sy)
+      applyDrawing(drawing.transformed(using: transform), geometryChange: true)
+      scheduleDrawingSync()
+      CraftoonDraftRecovery.shared.scheduleSave()
+      return true
+    }
+    guard let previous, reshaping,
+          abs(previous.width - next.width) > 0.001 || abs(previous.x - next.x) > 0.001 else { return false }
+    let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
+      ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
+    // Circle resizing may change height in the same update that extends the
+    // retained ink frame horizontally. Preserve the horizontal translation
+    // and apply the vertical resize together, exactly once.
+    let verticalScale = previous.height > 0 ? next.height / previous.height : 1
+    applyDrawing(drawing.transformed(using: CGAffineTransform(a: 1, b: 0, c: 0, d: verticalScale,
+                                                             tx: previous.x - next.x, ty: 0)), geometryChange: true)
+    scheduleDrawingSync()
+    CraftoonDraftRecovery.shared.scheduleSave()
+    return true
+  }
+
   private func scaleInkIfNeeded() {
+    if applyShapeFrameIfNeeded() { return }
     let size = bounds.size
     guard size.width > 0, size.height > 0 else { return }
     guard inkSize.width > 0, inkSize.height > 0, inkSize != size else { inkSize = size; return }
     let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
       ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
     let scaled = drawing.transformed(using: CGAffineTransform(scaleX: size.width / inkSize.width, y: size.height / inkSize.height))
-    applyDrawing(scaled)
+    applyDrawing(scaled, geometryChange: true)
     scheduleDrawingSync()
     CraftoonDraftRecovery.shared.scheduleSave()
   }
@@ -535,27 +958,33 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
   }
 
   override func layoutSubviews() {
+    let diagnosticStart = CraftoonPanelPerformance.paletteEnabled ? CraftoonPanelPerformance.now() : 0
+    defer {
+      if diagnosticStart > 0, CraftoonPanelPerformance.now() - diagnosticStart > 16 {
+        CraftoonPanelPerformance.write(["stage": "ink_layout_slow", "panel": panelId,
+          "durationMs": CraftoonPanelPerformance.now() - diagnosticStart, "active": isDrawingActive])
+      }
+    }
     super.layoutSubviews()
+    updateInkPolygonMask()
+    inkPolygonMask.contentsScale = (window?.screen.scale ?? UIScreen.main.scale) * inkRenderScale
     previewView.frame = bounds
     if let canvas = liveCanvas {
-      if canvas.frame != bounds { canvas.frame = bounds }
-      if canvas.contentSize != bounds.size { canvas.contentSize = bounds.size }
-      if canvas.contentOffset != .zero { canvas.contentOffset = .zero }
+      layoutInkCanvas(canvas)
     }
-    pointerPreview?.frame = bounds
-    pointerPreview?.contentSize = bounds.size
-    if isDrawingActive { scaleInkIfNeeded() }
-    else if lastBoundsSize != bounds.size { schedulePreview() }
+    if let preview = pointerPreview { layoutInkCanvas(preview) }
+    committedPreviews.forEach { layoutInkCanvas($0) }
+    // Layout mode normally has no live PKCanvasView. Resize its cached ink
+    // too; otherwise only the clipping shape changes until Draw is selected.
+    scaleInkIfNeeded()
+    if !isDrawingActive, lastBoundsSize != bounds.size { schedulePreview() }
     lastBoundsSize = bounds.size
   }
 
   private func releaseCanvas() {
     guard let canvas = liveCanvas else { return }
     canvas.delegate = nil
-    let picker = RNPencilKitView.sharedToolPicker
-    picker?.removeObserver(canvas)
-    picker?.setVisible(false, forFirstResponder: canvas)
-    canvas.resignFirstResponder()
+    detachToolPicker(from: canvas)
     committedPreviews.forEach { $0.removeFromSuperview() }
     committedPreviews.removeAll()
     canvas.removeGestureRecognizer(pointerInput)
@@ -633,13 +1062,16 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     guard window != nil, isDrawingActive else {
       if let canvas = liveCanvas {
         canvas.isUserInteractionEnabled = false
-        let picker = RNPencilKitView.sharedToolPicker
-        picker?.removeObserver(canvas)
-        picker?.setVisible(false, forFirstResponder: canvas)
-        canvas.resignFirstResponder()
+        detachToolPicker(from: canvas)
       }
       schedulePreview()
       return
+    }
+    if CraftoonPanelPerformance.enabled {
+      activationStartedMs = CraftoonPanelPerformance.now()
+      nativeReadyMs = 0
+      firstRenderMs = 0
+      activationMeasurements = ["reusedCanvas": liveCanvas != nil]
     }
     previewRevision += 1
     previewTimer?.invalidate()
@@ -648,14 +1080,13 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate {
     canvas.isUserInteractionEnabled = true
     canvas.backgroundColor = transparentBackground ? .clear : .white
     canvas.isOpaque = !transparentBackground
-    let picker = RNPencilKitView.sharedToolPicker
-    picker?.removeObserver(canvas)
-    picker?.addObserver(canvas)
-    if drawingTool == "pen", let selected = picker?.selectedTool { canvas.tool = selected }
-    canvas.becomeFirstResponder()
-    picker?.setVisible(true, forFirstResponder: canvas)
+    attachToolPicker(to: canvas)
     canvas.drawingPolicy = .anyInput
     updateTool()
+    if CraftoonPanelPerformance.enabled {
+      nativeReadyMs = CraftoonPanelPerformance.now()
+      reportPanelTiming("native_ready")
+    }
   }
 }
 

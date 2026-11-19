@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import {
   ActivityIndicator, Modal, SafeAreaView, ScrollView, useWindowDimensions,
-  StyleSheet, TextInput, TouchableOpacity, View,
+  StyleSheet, TextInput as NativeTextInput, TouchableOpacity, View,
 } from 'react-native';
-import { AppText as Text } from './AppText';
+import { AppText as Text, AppTextInput as TextInput } from './AppText';
 
 interface Props {
   visible: boolean;
@@ -16,7 +16,7 @@ interface Props {
 }
 
 export function SaveComicDialog({ visible, name, saving, error, onChangeName, onSave, onCancel }: Props) {
-  const input = useRef<TextInput>(null);
+  const input = useRef<NativeTextInput>(null);
   useEffect(() => {
     // Return keyboard focus after a failed save as well as on initial opening.
     if (visible && !saving) { input.current?.focus(); }

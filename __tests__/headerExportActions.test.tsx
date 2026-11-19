@@ -7,7 +7,7 @@ import { Header } from '../src/components/Header';
 
 jest.mock('lucide-react-native', () => {
   const icon = () => null;
-  return { Mail: icon, Printer: icon, File: icon, BookPlus: icon, LibraryBig: icon,
+  return { Mail: icon, Printer: icon, File: icon, Download: icon, LibraryBig: icon,
     SquarePen: icon, Glasses: icon, ChevronLeft: icon, ChevronRight: icon,
     Plus: icon, Minus: icon, Check: icon, Undo2: icon, Redo2: icon };
 });

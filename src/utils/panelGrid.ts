@@ -21,6 +21,7 @@ export function createPanelGrid(columns: number, rows: number,
   if (width <= 0 || height <= 0) { return []; }
   return Array.from({ length: rows * columns }, (_, index) => ({
     id: `${idPrefix}-${index}`,
+    layoutSource: 'template' as const,
     x: padding + (index % columns) * (width + gap),
     y: padding + Math.floor(index / columns) * (height + gap),
     width, height,

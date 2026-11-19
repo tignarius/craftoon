@@ -109,8 +109,9 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
         .sort(compareStoryCreation));
       setSelectedId(restored.id);
       setDeleted(null);
-    } catch {
-      Alert.alert('Could not restore', 'Please try again.');
+    } catch (error) {
+      if ((error as { code?: string }).code === 'PRO_REQUIRED') { requirePro('save', 'library'); }
+      else { Alert.alert('Could not restore', 'Please try again.'); }
     } finally { busyRef.current = false; }
   };
 

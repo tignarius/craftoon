@@ -2,7 +2,20 @@ export type ToolType = 'panel' | 'pen' | 'bubble' | 'brush' | 'eraser' | 'select
 
 export type PanelMode = 'layout' | 'draw';
 
+export type PanelPoint = { x: number; y: number };
+// Clockwise normalized corners: top-left, top-right, bottom-right, bottom-left.
+export type PanelCorners = [PanelPoint, PanelPoint, PanelPoint, PanelPoint];
+export type PanelBorderStyle = 'solid' | 'dashed' | 'dotted' | 'none';
+export type PanelInkGeometry = { width: number; height: number; corners?: PanelCorners; sourceDrawingData?: string };
+
 export interface ComicPanel {
+  corners?: PanelCorners;
+  shapeRevision?: number;
+  resizeInk?: boolean;
+  warpInk?: boolean;
+  adjustmentSide?: 'left' | 'right';
+  borderStyle?: PanelBorderStyle;
+  layoutSource?: 'manual' | 'template';
   tracingImage?: TracingImage;
   id: string;
   x: number;
@@ -12,6 +25,7 @@ export interface ComicPanel {
   borderWidth?: number;
   borderColor?: string;
   borderRadius?: number;
+  drawingHasStrokes?: boolean; // Native capture distinguishes blank PencilKit archives from artwork.
   drawingData?: string; // Native immutable ink reference; legacy Base64 remains readable.
 }
 

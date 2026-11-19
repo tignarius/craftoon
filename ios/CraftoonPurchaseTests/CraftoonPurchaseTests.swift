@@ -97,13 +97,41 @@ final class CraftoonPurchaseTests: XCTestCase {
     XCTFail("Refunded purchase remained entitled")
   }
 
-  func testNativeLibrarySavingRejectsFreeAccess() async {
-    let rejected = expectation(description: "Pro required")
-    let library = CraftoonLibrary()
-    library.saveStory(["id": "free-test", "title": "Free", "pages": [["id": "p", "panels": [], "bubbles": []]]] as NSDictionary,
-      resolver: { _ in XCTFail("Free library saving should be rejected"); rejected.fulfill() },
-      rejecter: { code, _, _ in XCTAssertEqual(code, "PRO_REQUIRED"); rejected.fulfill() })
-    await fulfillment(of: [rejected], timeout: 5)
+  func testNativeFreeLibrarySlotAndPageLimits() async {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let library = CraftoonLibrary(storageRoot: root)
+    func save(_ id: String, pages: Int = 1) async -> String? {
+      await withCheckedContinuation { continuation in
+        let document: [String: Any] = ["id": id, "title": id,
+          "pages": (0..<pages).map { ["id": "page-\($0)", "panels": [], "bubbles": []] as [String: Any] }]
+        library.saveStory(document as NSDictionary,
+          resolver: { _ in continuation.resume(returning: nil) },
+          rejecter: { code, _, _ in continuation.resume(returning: code) })
+      }
+    }
+    let first = await save("first", pages: 4)
+    XCTAssertNil(first)
+    let overwrite = await save("first", pages: 4)
+    XCTAssertNil(overwrite)
+    let fifthPage = await save("first", pages: 5)
+    XCTAssertEqual(fifthPage, "PRO_REQUIRED")
+    let second = await save("second")
+    XCTAssertEqual(second, "PRO_REQUIRED")
+    let token: String? = await withCheckedContinuation { continuation in
+      library.deleteStory("first", resolver: { receipt in
+        continuation.resume(returning: (receipt as? [String: Any])?["token"] as? String)
+      }, rejecter: { _, message, _ in XCTFail(message ?? "Delete failed"); continuation.resume(returning: nil) })
+    }
+    let reusedSlot = await save("second")
+    XCTAssertNil(reusedSlot)
+    if let token {
+      let restored: String? = await withCheckedContinuation { continuation in
+        library.restoreStory(token, resolver: { _ in continuation.resume(returning: nil) },
+          rejecter: { code, _, _ in continuation.resume(returning: code) })
+      }
+      XCTAssertEqual(restored, "PRO_REQUIRED")
+    } else { XCTFail("Missing deletion token") }
   }
 
   func testFreeDraftRecoveryRemainsAvailable() async {
@@ -229,6 +257,60 @@ final class CraftoonInkPerformanceTests: XCTestCase {
 
   private func reference(_ capture: CraftoonInkCapture) throws -> String {
     try XCTUnwrap((capture.pages.first?["panels"] as? [[String: Any]])?.first?["drawingData"] as? String)
+  }
+
+  func testCaptureDistinguishesEmptyArchivesFromActualStrokes() throws {
+    let id = UUID().uuidString
+    let pages: [[String: Any]] = [["panels": [["id": id]]]]
+    RNPencilKitView.drawingCache[id] = PKDrawing()
+    let blank = CraftoonInkStore.capture(pages)
+    let blankPanel = try XCTUnwrap((blank.pages[0]["panels"] as? [[String: Any]])?.first)
+    XCTAssertNotNil(blankPanel["drawingData"])
+    XCTAssertEqual(blankPanel["drawingHasStrokes"] as? Bool, false)
+    RNPencilKitView.drawingCache[id] = ink(1)
+    let drawn = CraftoonInkStore.capture(blank.pages)
+    XCTAssertEqual((drawn.pages[0]["panels"] as? [[String: Any]])?.first?["drawingHasStrokes"] as? Bool, true)
+    RNPencilKitView.drawingCache[id] = PKDrawing()
+    let erased = CraftoonInkStore.capture(drawn.pages)
+    XCTAssertEqual((erased.pages[0]["panels"] as? [[String: Any]])?.first?["drawingHasStrokes"] as? Bool, false)
+  }
+
+  func testInactiveBlankTemplateArchivesDoNotCountAsArtwork() async throws {
+    let blankID = UUID().uuidString
+    let drawnID = UUID().uuidString
+    let source: [[String: Any]] = [["panels": [["id": blankID], ["id": drawnID]]]]
+    RNPencilKitView.drawingCache[blankID] = PKDrawing()
+    RNPencilKitView.drawingCache[drawnID] = ink(1)
+    let first = CraftoonInkStore.capture(source)
+    let result = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<[[String: Any]], Error>) in
+      CraftoonInkStore.queue.async {
+        do {
+          try CraftoonInkStore.persist(first.drawings)
+          continuation.resume(returning: CraftoonInkStore.resolvingStrokePresence(first.pages))
+        } catch { continuation.resume(throwing: error) }
+      }
+    }
+    RNPencilKitView.drawingCache = [:]
+    // Reproduce preview retirement: React has no stroke metadata, only native references.
+    let retired = CraftoonInkStore.capture(source)
+    let resolved = await withCheckedContinuation { continuation in
+      CraftoonInkStore.queue.async {
+        continuation.resume(returning: CraftoonInkStore.resolvingStrokePresence(retired.pages))
+      }
+    }
+    let panels = try XCTUnwrap(resolved[0]["panels"] as? [[String: Any]])
+    XCTAssertEqual(panels[0]["drawingHasStrokes"] as? Bool, false)
+    XCTAssertEqual(panels[1]["drawingHasStrokes"] as? Bool, true)
+    XCTAssertEqual(result[0]["panels"] as? NSArray, resolved[0]["panels"] as? NSArray)
+
+    // A new native revision must not inherit an old false value from JavaScript.
+    var stale = result
+    var stalePanels = try XCTUnwrap(stale[0]["panels"] as? [[String: Any]])
+    stalePanels[1]["drawingData"] = "older-reference"
+    stalePanels[1]["drawingHasStrokes"] = false
+    stale[0]["panels"] = stalePanels
+    let changed = CraftoonInkStore.capture(stale)
+    XCTAssertNil((changed.pages[0]["panels"] as? [[String: Any]])?[1]["drawingHasStrokes"])
   }
 
   func testThousandsOfStrokesUseSmallImmutableReferencesAndArchiveOnlyChangedInk() async throws {
@@ -670,5 +752,329 @@ extension CraftoonInkPerformanceTests {
     release.signal()
     await fulfillment(of: [finished], timeout: 10)
     XCTAssertEqual(CraftoonInkStore.drawing(reference)?.strokes.count, 31)
+  }
+}
+
+@MainActor
+final class CraftoonPanelShapeTests: XCTestCase {
+  func testRepeatedActiveUpdatesDoNotStealPopoverFocusOrResetSelectedInk() throws {
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 500))
+    let controller = UIViewController()
+    window.rootViewController = controller
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    let input = UITextField(frame: CGRect(x: 0, y: 300, width: 200, height: 40))
+    controller.view.addSubview(view)
+    controller.view.addSubview(input)
+    window.makeKeyAndVisible()
+    defer { view.isDrawingActive = false; view.removeFromSuperview(); window.isHidden = true }
+    view.isDrawingActive = true
+    let canvas = view.canvasView
+    canvas.tool = PKInkingTool(.pen, color: .blue, width: 7)
+    XCTAssertTrue(input.becomeFirstResponder()) // A palette popover can similarly take focus.
+    for _ in 0..<10 {
+      view.didMoveToWindow() // Repeated Fabric/window updates during presentation.
+      XCTAssertTrue(input.isFirstResponder)
+      XCTAssertFalse(canvas.isFirstResponder)
+      XCTAssertEqual(try XCTUnwrap(canvas.tool as? PKInkingTool).color, UIColor.blue)
+    }
+    // An explicit switch out of and back into Draw reconnects the palette.
+    view.isDrawingActive = false
+    XCTAssertTrue(input.isFirstResponder)
+    view.isDrawingActive = true
+    XCTAssertTrue(canvas.isFirstResponder)
+  }
+
+  func testPixelRoundedFramesStillResizeAndWarpInactiveInk() throws {
+    let id = "rounded-ink-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id); CraftoonInkStore.latestReferences.removeValue(forKey: id) }
+    // React/Yoga rounds the actual view to pixels; JS retains fractional geometry.
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 150)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    RNPencilKitView.drawingCache[id] = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    func frame(_ right: Double, _ bottom: Double, resize: Bool) -> NSDictionary {
+      ["x": 12.17, "width": 200.12, "height": 200.12, "revision": 0, "preview": false,
+       "resizeInk": resize, "warpInk": !resize,
+       "corners": [["x": 0, "y": 0], ["x": right, "y": 0], ["x": bottom, "y": 1], ["x": 0, "y": 1]],
+       "contentBounds": ["x": 0, "y": 0, "width": right * 200.12, "height": 200.12]] as NSDictionary
+    }
+    func point() throws -> CGPoint {
+      let stroke = try XCTUnwrap(RNPencilKitView.drawingCache[id]?.strokes.first)
+      return stroke.path[0].location.applying(stroke.transform)
+    }
+    view.shapeFrame = frame(1, 1, resize: false)
+    view.layoutIfNeeded()
+    view.shapeFrame = frame(0.5, 0.5, resize: true)
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point().x, 50, accuracy: 0.001)
+    view.shapeFrame = frame(0.5, 0.25, resize: false)
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point().x, 50 * (1 - 0.5 * 100 / 200.12), accuracy: 0.001)
+    let once = try point()
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point(), once)
+  }
+
+  func testArrowWarpFollowsSlopingEdgesAndRetainsEditableInkAndEraserMask() throws {
+    let old = [CGPoint(x: 0, y: 0), CGPoint(x: 200, y: 0), CGPoint(x: 200, y: 200), CGPoint(x: 0, y: 200)]
+    let next = [CGPoint(x: 0, y: 0), CGPoint(x: 200, y: 0), CGPoint(x: 100, y: 200), CGPoint(x: 0, y: 200)]
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 200)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 0.7, force: 0.6, azimuth: 0.3, altitude: 1)
+    }, creationDate: Date())
+    let source = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .blue), path: path,
+      transform: .identity, mask: UIBezierPath(rect: CGRect(x: 90, y: 80, width: 20, height: 40)))])
+    let result = CraftoonInkShapeWarp.drawing(source, from: old, to: next)
+    let stroke = try XCTUnwrap(result.strokes.first)
+    XCTAssertEqual(stroke.path[0].location, CGPoint(x: 100, y: 0))
+    XCTAssertEqual(stroke.path[1].location, CGPoint(x: 75, y: 100))
+    XCTAssertEqual(stroke.path[2].location, CGPoint(x: 50, y: 200))
+    XCTAssertEqual(stroke.path[1].force, 0.6, accuracy: 0.001)
+    XCTAssertEqual(stroke.path[1].opacity, 0.7, accuracy: 0.001)
+    XCTAssertEqual(stroke.ink.color, UIColor.blue)
+    XCTAssertNotNil(stroke.mask)
+    XCTAssertTrue(try XCTUnwrap(stroke.mask).contains(CGPoint(x: 75, y: 100)))
+    XCTAssertTrue(CraftoonInkShapeWarp.drawing(PKDrawing(), from: old, to: next).strokes.isEmpty)
+  }
+
+  func testArrowPreviewDoesNotRepeatedlyWarpInkAndReleaseAppliesOnce() throws {
+    let id = "arrow-warp-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id); CraftoonInkStore.latestReferences.removeValue(forKey: id) }
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 100, y: 100), CGPoint(x: 100, y: 180)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    RNPencilKitView.drawingCache[id] = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    func frame(_ bottomX: Double, preview: Bool) -> NSDictionary {
+      ["x": 0, "width": 200, "height": 200, "revision": 0, "preview": preview, "warpInk": true,
+       "corners": [["x": 0, "y": 0], ["x": 1, "y": 0], ["x": bottomX, "y": 1], ["x": 0, "y": 1]]] as NSDictionary
+    }
+    view.shapeFrame = frame(1, preview: false)
+    view.layoutIfNeeded()
+    for bottom in [0.9, 0.8, 0.5] {
+      view.shapeFrame = frame(bottom, preview: true)
+      view.layoutIfNeeded()
+      XCTAssertEqual(try XCTUnwrap(RNPencilKitView.drawingCache[id]).strokes[0].path[0].location.x, 100)
+    }
+    view.shapeFrame = frame(0.5, preview: false)
+    view.layoutIfNeeded()
+    XCTAssertEqual(try XCTUnwrap(RNPencilKitView.drawingCache[id]).strokes[0].path[0].location.x, 75, accuracy: 0.01)
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    XCTAssertEqual(try XCTUnwrap(RNPencilKitView.drawingCache[id]).strokes[0].path[0].location.x, 75, accuracy: 0.01)
+  }
+
+  func testInactiveInkResizesWithVisiblePolygonInsideRetainedFrameButNotWithArrowEdits() throws {
+    let id = "visible-resize-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id); CraftoonInkStore.latestReferences.removeValue(forKey: id) }
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 20, y: 30), CGPoint(x: 80, y: 60)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    RNPencilKitView.drawingCache[id] = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    func frame(_ width: Double, _ height: Double, resize: Bool) -> NSDictionary {
+      ["x": 0, "width": 200, "height": height, "revision": 0, "preview": false, "resizeInk": resize,
+       "contentBounds": ["x": 0, "y": 0, "width": width, "height": height]] as NSDictionary
+    }
+    func point() throws -> CGPoint {
+      let stroke = try XCTUnwrap(RNPencilKitView.drawingCache[id]?.strokes.first)
+      return stroke.path[0].location.applying(stroke.transform)
+    }
+    view.shapeFrame = frame(200, 200, resize: false)
+    view.layoutIfNeeded()
+    view.shapeFrame = frame(120, 200, resize: false) // Arrow: change clipping only.
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point(), CGPoint(x: 20, y: 30))
+    view.shapeFrame = frame(60, 200, resize: true) // Circle: same frame, half visible width.
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point().x, 10, accuracy: 0.01)
+    XCTAssertEqual(try point().y, 30, accuracy: 0.01)
+    view.shapeFrame = frame(120, 100, resize: true)
+    view.frame.size.height = 100
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point().x, 20, accuracy: 0.01)
+    XCTAssertEqual(try point().y, 15, accuracy: 0.01)
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    XCTAssertEqual(try point().x, 20, accuracy: 0.01)
+    XCTAssertEqual(try point().y, 15, accuracy: 0.01)
+    XCTAssertFalse(view.subviews.contains { $0 is PKCanvasView })
+  }
+
+  func testFocusZoomUsesNativeViewportWithoutChangingDrawingCoordinates() throws {
+    let id = "focus-zoom-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id) }
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 150))
+    view.panelId = id
+    let canvas = view.canvasView
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 20, y: 30), CGPoint(x: 80, y: 50)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    canvas.drawing = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    let originalBounds = canvas.drawing.bounds
+    view.layoutIfNeeded()
+    for scale in [3.0, 1.0, 2.5, 1.0] {
+      view.renderScale = scale
+      view.layoutIfNeeded()
+      XCTAssertEqual(canvas.zoomScale, CGFloat(scale), accuracy: 0.001)
+      XCTAssertEqual(canvas.bounds.width, 200 * CGFloat(scale), accuracy: 0.001)
+      XCTAssertEqual(canvas.bounds.height, 150 * CGFloat(scale), accuracy: 0.001)
+      XCTAssertEqual(canvas.frame.width, 200, accuracy: 0.001)
+      XCTAssertEqual(canvas.frame.height, 150, accuracy: 0.001)
+      XCTAssertEqual(canvas.drawing.bounds, originalBounds)
+      XCTAssertEqual(canvas.drawing.strokes[0].path[0].location, CGPoint(x: 20, y: 30))
+      XCTAssertEqual(canvas.contentOffset, .zero)
+      let point = view.convert(CGPoint(x: 40, y: 60), to: canvas)
+      XCTAssertEqual(point.x / canvas.zoomScale, 40, accuracy: 0.001)
+      XCTAssertEqual(point.y / canvas.zoomScale, 60, accuracy: 0.001)
+    }
+  }
+
+  func testExtendingShapeFrameTranslatesInkWithoutStretchingOrApplyingTwice() throws {
+    let id = "shape-frame-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id); CraftoonInkStore.latestReferences.removeValue(forKey: id) }
+    let path = PKStrokePath(controlPoints: [20.0, 80.0].enumerated().map { index, x in
+      PKStrokePoint(location: CGPoint(x: CGFloat(x), y: 30), timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    let drawing = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    view.shapeFrame = ["x": 100, "width": 200, "height": 200, "revision": 0, "preview": false]
+    view.layoutIfNeeded()
+    view.drawingData = drawing.dataRepresentation().base64EncodedString()
+    view.shapeFrame = ["x": 50, "width": 250, "height": 200, "revision": 1, "preview": true]
+    view.frame.size.width = 250
+    view.layoutIfNeeded()
+    let shifted = try XCTUnwrap(RNPencilKitView.drawingCache[id])
+    XCTAssertEqual(shifted.bounds.minX, drawing.bounds.minX + 50, accuracy: 0.01)
+    XCTAssertEqual(shifted.bounds.width, drawing.bounds.width, accuracy: 0.01)
+    view.shapeFrame = ["x": 50, "width": 250, "height": 200, "revision": 1, "preview": false]
+    view.layoutIfNeeded()
+    XCTAssertEqual(try XCTUnwrap(RNPencilKitView.drawingCache[id]).bounds, shifted.bounds)
+    view.shapeFrame = ["x": 0, "width": 300, "height": 300, "revision": 2, "preview": false]
+    view.frame.size = CGSize(width: 300, height: 300)
+    view.layoutIfNeeded()
+    let resized = try XCTUnwrap(RNPencilKitView.drawingCache[id])
+    let originalPoint = shifted.strokes[0].path[0].location.applying(shifted.strokes[0].transform)
+    let resizedPoint = resized.strokes[0].path[0].location.applying(resized.strokes[0].transform)
+    XCTAssertEqual(resizedPoint.x, originalPoint.x + 50, accuracy: 0.01)
+    XCTAssertEqual(resizedPoint.y, originalPoint.y * 1.5, accuracy: 0.01)
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    XCTAssertEqual(try XCTUnwrap(RNPencilKitView.drawingCache[id]).bounds, resized.bounds)
+  }
+
+  func testRectanglesAvoidMasksAndUnchangedSlopingMasksReuseTheirPath() throws {
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.layoutIfNeeded()
+    XCTAssertTrue(view.clipsToBounds)
+    XCTAssertNil(view.layer.mask)
+    let points = [["x": 0.4, "y": 0], ["x": 1, "y": 0], ["x": 1, "y": 1], ["x": 0, "y": 1]] as NSArray
+    view.polygonPoints = points
+    let mask = try XCTUnwrap(view.layer.mask as? CAShapeLayer)
+    let path = try XCTUnwrap(mask.path)
+    for _ in 0..<10 {
+      view.polygonPoints = points
+      view.setNeedsLayout()
+      view.layoutIfNeeded()
+    }
+    XCTAssertTrue(view.layer.mask === mask)
+    XCTAssertTrue(mask.path === path)
+    XCTAssertFalse(view.point(inside: CGPoint(x: 10, y: 10), with: nil))
+    view.polygonPoints = []
+    XCTAssertNil(view.layer.mask)
+  }
+
+  func testPencilKitMasksLiveAndPreviewChildrenAndUpdatesAfterReshape() throws {
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.polygonPoints = [["x": 0.4, "y": 0], ["x": 1, "y": 0], ["x": 1, "y": 1], ["x": 0, "y": 1]] as NSArray
+    view.layoutIfNeeded()
+    let canvas = view.canvasView
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    let mask = try XCTUnwrap(view.layer.mask as? CAShapeLayer)
+    XCTAssertTrue(canvas.superview === view)
+    XCTAssertFalse(try XCTUnwrap(mask.path).contains(CGPoint(x: 10, y: 10)))
+    XCTAssertTrue(try XCTUnwrap(mask.path).contains(CGPoint(x: 120, y: 10)))
+    XCTAssertNil(view.hitTest(CGPoint(x: 10, y: 10), with: nil))
+    XCTAssertFalse(view.point(inside: CGPoint(x: 10, y: 10), with: nil))
+
+    // Changing modes or adding another rendering child cannot bypass the mask.
+    let strokePreview = UIView(frame: view.bounds)
+    strokePreview.backgroundColor = .red
+    view.addSubview(strokePreview)
+    view.isDrawingActive = false
+    XCTAssertTrue(view.layer.mask === mask)
+    XCTAssertTrue(strokePreview.superview === view)
+    view.polygonPoints = [["x": 0, "y": 0], ["x": 0.5, "y": 0], ["x": 1, "y": 1.0000000000000002], ["x": 0, "y": 1]] as NSArray
+    view.frame.size.width = 300
+    view.layoutIfNeeded()
+    XCTAssertTrue(view.layer.mask === mask)
+    XCTAssertFalse(try XCTUnwrap(mask.path).contains(CGPoint(x: 280, y: 10)))
+    XCTAssertTrue(try XCTUnwrap(mask.path).contains(CGPoint(x: 10, y: 10)))
+    XCTAssertEqual(mask.frame.size, view.bounds.size)
+    XCTAssertTrue(view.canvasView === canvas)
+  }
+
+  func testLiveMaskClipsCornersAndRejectsInvalidSavedGeometry() {
+    let points: [[String: Double]] = [["x": 0.4, "y": 0], ["x": 1, "y": 0], ["x": 1, "y": 1], ["x": 0, "y": 1]]
+    let view = CraftoonPanelClipView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.polygonPoints = points as NSArray
+    view.layoutIfNeeded()
+    XCTAssertFalse(view.point(inside: CGPoint(x: 10, y: 10), with: nil))
+    XCTAssertTrue(view.point(inside: CGPoint(x: 120, y: 10), with: nil))
+    let mask = view.layer.mask as? CAShapeLayer
+    XCTAssertEqual(mask?.path?.boundingBoxOfPath, view.bounds)
+    view.polygonPoints = [["x": Double.nan, "y": 0]] as NSArray
+    view.layoutIfNeeded()
+    XCTAssertTrue(view.point(inside: CGPoint(x: 10, y: 10), with: nil))
+  }
+
+  private func darkness(_ image: UIImage, at point: CGPoint) throws -> Int {
+    let cg = try XCTUnwrap(image.cgImage)
+    let pixel = try XCTUnwrap(cg.cropping(to: CGRect(x: point.x * image.scale, y: point.y * image.scale, width: 1, height: 1)))
+    var bytes = [UInt8](repeating: 0, count: 4)
+    try bytes.withUnsafeMutableBytes { buffer in
+      let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+      context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+    }
+    return 765 - Int(bytes[0]) - Int(bytes[1]) - Int(bytes[2])
+  }
+
+  func testReadAndExportClipInkToQuadrilateralAndPreserveBorderStyles() throws {
+    let library = CraftoonLibrary()
+    let path = PKStrokePath(controlPoints: [0.0, 180.0].enumerated().map { index, x in
+      PKStrokePoint(location: CGPoint(x: CGFloat(x), y: 20), timeOffset: Double(index), size: CGSize(width: 8, height: 8),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    let ink = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    let corners = [["x": 0.4, "y": 0.0], ["x": 1.0, "y": 0.0], ["x": 1.0, "y": 1.0], ["x": 0.0, "y": 1.0]]
+    let panel: [String: Any] = ["id": "shape", "x": 12, "y": 12, "width": 200, "height": 200,
+      "corners": corners, "borderStyle": "none", "drawingData": ink.dataRepresentation().base64EncodedString()]
+    let image = try XCTUnwrap(library.pageImage(["canvasSize": ["width": 300, "height": 300], "panels": [panel]]))
+    XCTAssertLessThan(try darkness(image, at: CGPoint(x: 25, y: 34)), 20)
+    XCTAssertGreaterThan(try darkness(image, at: CGPoint(x: 130, y: 34)), 300)
+
+    var counts: [String: Int] = [:]
+    for style in ["solid", "dashed", "dotted", "none"] {
+      let borderPanel: [String: Any] = ["id": "border", "x": 12, "y": 12, "width": 200, "height": 200, "borderStyle": style]
+      let preview = try XCTUnwrap(library.pageImage(["canvasSize": ["width": 300, "height": 300], "panels": [borderPanel]]))
+      counts[style] = try (24..<200).filter { try darkness(preview, at: CGPoint(x: CGFloat($0), y: 13)) > 100 }.count
+    }
+    XCTAssertGreaterThan(counts["solid"]!, counts["dashed"]!)
+    XCTAssertGreaterThan(counts["dashed"]!, counts["dotted"]!)
+    XCTAssertGreaterThan(counts["dotted"]!, 0)
+    XCTAssertEqual(counts["none"], 0)
   }
 }

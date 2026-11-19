@@ -1,0 +1,7 @@
+- Import a reference image into each panel from Photos or Files.
+- Move, rotate, scale, hide, and adjust the opacity of tracing references while staying in Draw mode.
+- Use PencilKit's built-in lasso in Draw mode. Layout and Draw now cover panel editing without a separate Edit mode.
+- Improved drawing storage and panel previews for comics with many strokes and reference images.
+- Select a comic in Library to reveal centered actions without shifting the gallery. Tap empty space to deselect.
+- Refined canvas orientation selection and a simpler app menu.
+- Updated the English one-page Quick Guide.

@@ -136,18 +136,34 @@ actor CraftoonPurchaseStore {
 }
 
 private final class CraftoonGuideController: UIViewController {
+  private let pdf = PDFView()
+  private var fittedSize: CGSize = .zero
+
+  static func documentURL() -> URL? {
+    Bundle.main.url(forResource: "craftoon-quick-guide", withExtension: "pdf")
+  }
+
+  private func loadGuide() {
+    guard let url = Self.documentURL() else { return }
+    if pdf.document?.documentURL == url { return }
+    pdf.document = PDFDocument(url: url)
+    pdf.accessibilityLabel = "Craftoon quick guide"
+    fittedSize = .zero
+    pdf.autoScales = true
+    view.setNeedsLayout()
+  }
+
   override func viewDidLoad() {
     super.viewDidLoad()
     title = "Craftoon Quick Guide"
     view.backgroundColor = .systemBackground
     navigationItem.rightBarButtonItem = UIBarButtonItem(barButtonSystemItem: .done,
       target: self, action: #selector(closeGuide))
-    let pdf = PDFView()
     pdf.translatesAutoresizingMaskIntoConstraints = false
+    pdf.displayMode = .singlePage
+    pdf.displaysPageBreaks = false
     pdf.autoScales = true
-    if let url = Bundle.main.url(forResource: "craftoon-quick-guide", withExtension: "pdf") {
-      pdf.document = PDFDocument(url: url)
-    }
+    loadGuide()
     view.addSubview(pdf)
     NSLayoutConstraint.activate([
       pdf.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
@@ -155,6 +171,18 @@ private final class CraftoonGuideController: UIViewController {
       pdf.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor),
       pdf.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor)
     ])
+  }
+  override func viewDidLayoutSubviews() {
+    super.viewDidLayoutSubviews()
+    // PDFKit may choose its initial scale before the navigation bar and safe
+    // area have their final sizes. Fit again only when bounds/document change,
+    // so the whole guide is visible without resetting the user's pinch zoom.
+    guard pdf.bounds.width > 0, pdf.bounds.height > 0,
+          fittedSize != pdf.bounds.size else { return }
+    fittedSize = pdf.bounds.size
+    pdf.layoutIfNeeded()
+    pdf.scaleFactor = pdf.scaleFactorForSizeToFit
+    pdf.goToFirstPage(nil)
   }
   @objc private func closeGuide() { dismiss(animated: true) }
 }
@@ -202,8 +230,11 @@ class CraftoonPro: RCTEventEmitter {
   }
   @objc func showManual(_ resolve: @escaping RCTPromiseResolveBlock, rejecter reject: @escaping RCTPromiseRejectBlock) {
     DispatchQueue.main.async {
-      guard Bundle.main.url(forResource: "craftoon-quick-guide", withExtension: "pdf") != nil,
-            let presenter = RCTPresentedViewController(), !presenter.isBeingDismissed else {
+      guard let presenter = RCTPresentedViewController(), !presenter.isBeingDismissed else {
+        reject("GUIDE_UNAVAILABLE", "Could not open the quick guide. Please try again.", nil)
+        return
+      }
+      guard CraftoonGuideController.documentURL() != nil else {
         reject("GUIDE_UNAVAILABLE", "Could not open the quick guide. Please try again.", nil)
         return
       }

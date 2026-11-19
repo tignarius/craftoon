@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import {
   View,
   StyleSheet,
@@ -7,18 +7,34 @@ import {
   Image,
   ActivityIndicator,
 } from 'react-native';
-import { ComicPanel, PanelMode, TracingImage } from '../types/comic';
+import { ComicPanel, PanelMode, TracingImage, PanelCorners, PanelBorderStyle, PanelInkGeometry } from '../types/comic';
 import { TracingImageControls } from './TracingImageControls';
-import { Image as ImageIcon, Move, Pen, Trash2 } from 'lucide-react-native';
+import Svg, { Polygon } from 'react-native-svg';
+import { PanelSurface } from './PanelSurface';
+import { PANEL_ICON_SCALE } from './panelIconSizing';
+import { PanelBorderIcon } from './PanelBorderIcon';
+import { PanelCornerHandle } from './PanelCornerHandle';
+import { snapPanelMove, snapPanelResize, PanelSnapGuide, ShapeUpdate } from '../utils/panelSnap';
+import { panelCorners, panelControlLayout, panelHandleSide, panelsCollide, panelRenderedFrame } from '../utils/panelGeometry';
+import { Image as ImageIcon, Move, Pen, Trash2, ZoomIn, ZoomOut } from 'lucide-react-native';
 import { PencilKitView } from '../../PencilKitView';
 
 const MODE_STYLE = {
-  layout: { border: '#4ECDC4', icon: '#4ECDC4', bg: 'rgba(78, 205, 196, 0.2)' },
-  draw:   { border: '#FF8C42', icon: '#FF8C42', bg: 'rgba(255, 140, 66, 0.2)' },
-  null:   { border: '#1E293B', icon: '#1E293B', bg: 'transparent' },
+  layout: { border: '#3B82F6', icon: '#3B82F6', bg: '#FFFFFF', buttonBorder: '#3B82F6' },
+  draw:   { border: '#F97316', icon: '#F97316', bg: '#FFFFFF', buttonBorder: '#F97316' },
+  null:   { border: '#1E293B', icon: '#1E293B', bg: 'transparent', buttonBorder: 'transparent' },
 };
 
 interface PanelProps {
+  selectionTimestamp?: number;
+  interactive?: boolean;
+  hidden?: boolean;
+  displayPosition?: { x: number; y: number };
+  displayScale?: number;
+  focused?: boolean;
+  onToggleFocus?: () => void;
+  onShapeChange?: (id: string, update: ShapeUpdate) => void;
+  onBorderStyleChange?: (id: string, style: PanelBorderStyle) => void;
   onImportTracingImage?: (panelId: string) => void;
   importingTracingImage?: boolean;
   stackOrder?: number;
@@ -35,27 +51,30 @@ interface PanelProps {
   onSelect: (id: string) => void;
   onModeChange: (id: string) => void;
   onMove: (id: string, newPos: { x: number; y: number }) => void;
-  onResize: (id: string, newSize: { width: number; height: number }) => void;
+  onResize: (id: string, newSize: { width: number; height: number; x?: number; y?: number; corners?: PanelCorners; shapeRevision?: number; resizeInk?: boolean; warpInk?: boolean; tracingImage?: ComicPanel['tracingImage'] }) => void;
   onDelete: (id: string) => void;
   onDoubleTap: (id: string) => void;
-  onDrawingUpdate?: (id: string, drawingData: string) => void;
+  onDrawingUpdate?: (id: string, drawingData: string, geometry?: PanelInkGeometry) => void;
 }
 
-const PANEL_GAP = 16;
-const SNAP_THRESHOLD = 18;
-const WORKSPACE_PADDING = 12;
 const PANEL_BORDER_WIDTH = 2;
-const ACTIVE_BORDER_WIDTH = 3;
 const RESIZE_HANDLE_SIZE = 28;
-// The active outline is independent of the fixed layout border.
-const RESIZE_HANDLE_OFFSET = ACTIVE_BORDER_WIDTH / 2 - PANEL_BORDER_WIDTH - RESIZE_HANDLE_SIZE / 2;
 
 export const Panel: React.FC<PanelProps> = ({
+  selectionTimestamp = 0,
+  interactive = true,
+  hidden = false,
+  displayPosition,
+  displayScale = 1,
+  focused = false,
+  onToggleFocus,
+  onShapeChange,
+  onBorderStyleChange,
   onImportTracingImage,
   importingTracingImage = false,
   stackOrder = 0,
   canvasScale = 1,
-  panel,
+  panel: storedPanel,
   mode,
   transparentBackground = false,
   tracingEditing = false,
@@ -72,11 +91,52 @@ export const Panel: React.FC<PanelProps> = ({
   onDoubleTap,
   onDrawingUpdate,
 }) => {
+  const [reshaping, setReshaping] = useState(false);
+  const reshapingSideRef = useRef(panelHandleSide(storedPanel, otherPanels));
+  const reshapingRef = useRef(reshaping);
+  reshapingRef.current = reshaping;
+  const [borderMenu, setBorderMenu] = useState(false);
+  useEffect(() => { setReshaping(false); setBorderMenu(false); }, [mode]);
+  const [shapePreview, setShapePreview] = useState<ShapeUpdate | null>(null);
+  const [geometryPreview, setGeometryPreview] = useState<Partial<ComicPanel> | null>(null);
+  const [resizingSide, setResizingSide] = useState<'left' | 'right' | null>(null);
+  useEffect(() => { setGeometryPreview(null); }, [storedPanel.x, storedPanel.y, storedPanel.width, storedPanel.height, storedPanel.corners, mode]);
+  useEffect(() => { setShapePreview(null); }, [storedPanel.corners, mode]);
+  const panel = { ...storedPanel, ...geometryPreview, ...shapePreview };
+  const corners = panelCorners(panel);
+  const previewingShape = shapePreview !== null || geometryPreview !== null;
+  const nativeShapeFrame = useMemo(() => ({ x: panel.x, width: panel.width - 4, height: panel.height - 4,
+    revision: panel.shapeRevision ?? 0, preview: previewingShape, resizeInk: panel.resizeInk ?? false,
+    warpInk: panel.warpInk ?? false, corners,
+    contentBounds: {
+      x: Math.min(...corners.map(p => p.x)) * (panel.width - 4),
+      y: Math.min(...corners.map(p => p.y)) * (panel.height - 4),
+      width: (Math.max(...corners.map(p => p.x)) - Math.min(...corners.map(p => p.x))) * (panel.width - 4),
+      height: (Math.max(...corners.map(p => p.y)) - Math.min(...corners.map(p => p.y))) * (panel.height - 4),
+    } }),
+    [panel.x, panel.width, panel.height, panel.shapeRevision, panel.resizeInk, panel.warpInk, corners, previewingShape]);
+  const shapePoints = corners.map(p => `${2 + p.x * (panel.width - 4)},${2 + p.y * (panel.height - 4)}`).join(' ');
+  const handleSide = resizingSide ?? (reshaping ? reshapingSideRef.current : panelHandleSide(panel, otherPanels));
+  const handleIndex = handleSide === 'left' ? 3 : 2;
+  const handleSideRef = useRef(handleSide);
+  handleSideRef.current = handleSide;
+  const toggleReshaping = () => {
+    if (!reshapingRef.current) { reshapingSideRef.current = handleSideRef.current; }
+    setReshaping(value => !value);
+  };
+  const resizeStartRef = useRef(panel);
+  const resizeSideRef = useRef(handleSide);
+  const toolbar = panelControlLayout({ ...panel, corners });
+  const visualButtonSize = toolbar.buttonSize * PANEL_ICON_SCALE;
+  const buttonDimensions = { width: visualButtonSize, height: visualButtonSize, borderRadius: visualButtonSize / 2 };
+  const touchPadding = (toolbar.buttonSize - visualButtonSize) / 2;
+  const iconHitSlop = { top: touchPadding, right: touchPadding, bottom: touchPadding, left: touchPadding };
+  const iconSize = Math.min(25, toolbar.buttonSize * 0.72) * PANEL_ICON_SCALE;
+  const borderStyle = panel.borderStyle ?? 'solid';
   const [tracingPreview, setTracingPreview] = useState<TracingImage | null>(null);
   useEffect(() => { setTracingPreview(null); }, [panel.tracingImage, tracingEditing]);
   const reference = tracingPreview ?? panel.tracingImage;
   const referenceVisible = !!reference && reference.visible !== false;
-  const clearCanvas = transparentBackground || referenceVisible;
   const scaleRef = useRef(canvasScale);
   scaleRef.current = canvasScale;
   const modeRef = useRef(mode);
@@ -109,8 +169,33 @@ export const Panel: React.FC<PanelProps> = ({
   const onDoubleTapRef = useRef(onDoubleTap);
   onDoubleTapRef.current = onDoubleTap;
 
+  const moveStartPanelRef = useRef(storedPanel);
+  const moveResultRef = useRef<{ x: number; y: number } | null>(null);
+  const resizeResultRef = useRef<ReturnType<typeof snapPanelResize> | null>(null);
+  const resizeDraggedRef = useRef(false);
+  const finishMove = () => {
+    const result = moveResultRef.current;
+    moveResultRef.current = null;
+    if (result && (result.x !== moveStartPanelRef.current.x || result.y !== moveStartPanelRef.current.y)) {
+      Promise.resolve(onMoveRef.current(panelRef.current.id, result))
+        .finally(() => setGeometryPreview(current => current === result ? null : current));
+    } else { setGeometryPreview(null); }
+    onGuidesChangeRef.current?.([]);
+  };
+  const finishResize = () => {
+    setResizingSide(null);
+    const result = resizeResultRef.current;
+    resizeResultRef.current = null;
+    const start = resizeStartRef.current;
+    if (result && (result.width !== start.width || result.height !== start.height
+      || (result.x !== undefined && result.x !== start.x)
+      || JSON.stringify(result.corners) !== JSON.stringify(start.corners))) {
+      Promise.resolve(onResizeRef.current(panelRef.current.id, result))
+        .finally(() => setGeometryPreview(current => current === result ? null : current));
+    } else { setGeometryPreview(null); }
+    onGuidesChangeRef.current?.([]);
+  };
   const startPosRef = useRef({ x: panel.x, y: panel.y });
-  const startSizeRef = useRef({ width: panel.width, height: panel.height });
 
   // Double-tap tracking
   const lastTapRef = useRef<number>(0);
@@ -124,81 +209,43 @@ export const Panel: React.FC<PanelProps> = ({
     PanResponder.create({
       onStartShouldSetPanResponder: () => modeRef.current === 'layout' || !modeRef.current,
       onMoveShouldSetPanResponder: (_, g) => {
-        if (modeRef.current !== 'layout') return false;
+        if (modeRef.current !== 'layout' || reshapingRef.current) return false;
         return Math.abs(g.dx) > 12 || Math.abs(g.dy) > 12;
       },
       onPanResponderGrant: () => {
+        moveResultRef.current = null;
         startPosRef.current = { x: panelRef.current.x, y: panelRef.current.y };
+        moveStartPanelRef.current = panelRef.current;
         isAlreadySelectedRef.current = modeRef.current === 'layout';
       },
       onPanResponderMove: (_, g) => {
-        if (modeRef.current !== 'layout') return;
+        if (modeRef.current !== 'layout' || reshapingRef.current) return;
         if (!isAlreadySelectedRef.current) return;
         const dx = Math.abs(g.dx);
         const dy = Math.abs(g.dy);
-        if (dx > 12 || dy > 12) {
-          let targetX = startPosRef.current.x + g.dx / scaleRef.current;
-          let targetY = startPosRef.current.y + g.dy / scaleRef.current;
-          const activeGuides: { type: 'vertical' | 'horizontal'; pos: number }[] = [];
-          const myW = panelRef.current.width;
-          const myH = panelRef.current.height;
-
-          // 캔버스 여백 스냅
-          if (Math.abs(targetX - WORKSPACE_PADDING) < SNAP_THRESHOLD) {
-            targetX = WORKSPACE_PADDING;
-            activeGuides.push({ type: 'vertical', pos: targetX });
-          }
-          if (Math.abs(targetY - WORKSPACE_PADDING) < SNAP_THRESHOLD) {
-            targetY = WORKSPACE_PADDING;
-            activeGuides.push({ type: 'horizontal', pos: targetY });
-          }
-
-          // 다른 패널들과의 자석 스냅
-          for (const other of otherPanelsRef.current) {
-            // X축 스냅
-            if (Math.abs(targetX - other.x) < SNAP_THRESHOLD) {
-              targetX = other.x;
-              activeGuides.push({ type: 'vertical', pos: targetX });
-            } else if (Math.abs(targetX - (other.x + other.width + PANEL_GAP)) < SNAP_THRESHOLD) {
-              targetX = other.x + other.width + PANEL_GAP;
-              activeGuides.push({ type: 'vertical', pos: targetX });
-            } else if (Math.abs(targetX + myW - (other.x + other.width)) < SNAP_THRESHOLD) {
-              targetX = other.x + other.width - myW;
-              activeGuides.push({ type: 'vertical', pos: targetX + myW });
-            } else if (Math.abs(targetX + myW - (other.x - PANEL_GAP)) < SNAP_THRESHOLD) {
-              targetX = other.x - PANEL_GAP - myW;
-              activeGuides.push({ type: 'vertical', pos: other.x - PANEL_GAP });
-            }
-
-            // Y축 스냅
-            if (Math.abs(targetY - other.y) < SNAP_THRESHOLD) {
-              targetY = other.y;
-              activeGuides.push({ type: 'horizontal', pos: targetY });
-            } else if (Math.abs(targetY - (other.y + other.height + PANEL_GAP)) < SNAP_THRESHOLD) {
-              targetY = other.y + other.height + PANEL_GAP;
-              activeGuides.push({ type: 'horizontal', pos: targetY });
-            } else if (Math.abs(targetY + myH - (other.y + other.height)) < SNAP_THRESHOLD) {
-              targetY = other.y + other.height - myH;
-              activeGuides.push({ type: 'horizontal', pos: targetY + myH });
-            } else if (Math.abs(targetY + myH - (other.y - PANEL_GAP)) < SNAP_THRESHOLD) {
-              targetY = other.y - PANEL_GAP - myH;
-              activeGuides.push({ type: 'horizontal', pos: other.y - PANEL_GAP });
-            }
-          }
-
-          const bounds = sheetBoundsRef.current;
-          const maxX = bounds ? Math.max(WORKSPACE_PADDING, bounds.width - WORKSPACE_PADDING - myW) : Infinity;
-          const maxY = bounds ? Math.max(WORKSPACE_PADDING, bounds.height - WORKSPACE_PADDING - myH) : Infinity;
-          targetX = Math.min(maxX, Math.max(WORKSPACE_PADDING, targetX));
-          targetY = Math.min(maxY, Math.max(WORKSPACE_PADDING, targetY));
-
-          onMoveRef.current(panelRef.current.id, { x: targetX, y: targetY });
-          if (onGuidesChangeRef.current) {
-            onGuidesChangeRef.current(activeGuides);
-          }
+        if (dx > 12 || dy > 12 || moveResultRef.current) {
+          const target = snapPanelMove(panelRef.current, {
+            x: startPosRef.current.x + g.dx / scaleRef.current,
+            y: startPosRef.current.y + g.dy / scaleRef.current,
+          }, otherPanelsRef.current, sheetBoundsRef.current);
+          if (otherPanelsRef.current.some(other => !panelsCollide(panelRenderedFrame(moveStartPanelRef.current), panelRenderedFrame(other), 0)
+            && panelsCollide(panelRenderedFrame({ ...panelRef.current, x: target.x, y: target.y }), panelRenderedFrame(other), 0))) { return; }
+          moveResultRef.current = { x: target.x, y: target.y };
+          setGeometryPreview(moveResultRef.current);
+          onGuidesChangeRef.current?.(target.guides);
         }
       },
       onPanResponderRelease: (_, g) => {
+        if (moveResultRef.current) { finishMove(); isAlreadySelectedRef.current = false; return; }
+        if (reshapingRef.current) {
+          if (Math.abs(g.dx) < 10 && Math.abs(g.dy) < 10) {
+            setReshaping(false);
+            setShapePreview(null);
+          }
+          isAlreadySelectedRef.current = false;
+          onGuidesChangeRef.current?.([]);
+          return;
+        }
         const dx = Math.abs(g.dx);
         const dy = Math.abs(g.dy);
         if (dx < 10 && dy < 10) {
@@ -213,7 +260,7 @@ export const Panel: React.FC<PanelProps> = ({
             if (isAlreadySelectedRef.current) {
               onDoubleTapRef.current(panelRef.current.id); // draw 모드로 전환
             } else {
-              // 미선택 상태에서 클릭 시 먼저 레이아웃 모드로 선택
+              // A first tap selects the panel directly in Draw mode.
               onSelectRef.current(panelRef.current.id);
             }
           }
@@ -223,104 +270,220 @@ export const Panel: React.FC<PanelProps> = ({
           onGuidesChangeRef.current([]);
         }
       },
+      onPanResponderTerminate: finishMove,
+      onPanResponderTerminationRequest: () => false,
     })
   ).current;
 
   // Layout mode: resize handle with magnetic snap
   const resizePR = useRef(
     PanResponder.create({
+      onPanResponderTerminationRequest: () => false,
       onStartShouldSetPanResponder: () => modeRef.current === 'layout',
       onPanResponderGrant: () => {
-        startSizeRef.current = { width: panelRef.current.width, height: panelRef.current.height };
+        resizeResultRef.current = null;
+        resizeDraggedRef.current = false;
+        resizeStartRef.current = panelRef.current;
+        resizeSideRef.current = handleSideRef.current;
+        setResizingSide(resizeSideRef.current);
       },
       onPanResponderMove: (_, g) => {
-        let targetW = Math.max(80, startSizeRef.current.width + g.dx / scaleRef.current);
-        let targetH = Math.max(80, startSizeRef.current.height + g.dy / scaleRef.current);
-        const activeGuides: { type: 'vertical' | 'horizontal'; pos: number }[] = [];
-
-        const rightEdge = panelRef.current.x + targetW;
-        const bottomEdge = panelRef.current.y + targetH;
-
-        // 캔버스 우하단 여백 스냅
-        if (sheetBoundsRef.current) {
-          const maxW = sheetBoundsRef.current.width - WORKSPACE_PADDING;
-          const maxH = sheetBoundsRef.current.height - WORKSPACE_PADDING;
-          if (Math.abs(rightEdge - maxW) < SNAP_THRESHOLD) {
-            targetW = maxW - panelRef.current.x;
-            activeGuides.push({ type: 'vertical', pos: maxW });
-          }
-          if (Math.abs(bottomEdge - maxH) < SNAP_THRESHOLD) {
-            targetH = maxH - panelRef.current.y;
-            activeGuides.push({ type: 'horizontal', pos: maxH });
-          }
+        if (modeRef.current !== 'layout') { return; }
+        if (Math.abs(g.dx) >= 5 || Math.abs(g.dy) >= 5) { resizeDraggedRef.current = true; }
+        const guides: PanelSnapGuide[] = [];
+        const target = snapPanelResize(resizeStartRef.current, g.dx / scaleRef.current, g.dy / scaleRef.current,
+          resizeSideRef.current, otherPanelsRef.current, sheetBoundsRef.current, guides);
+        if (otherPanelsRef.current.some(other => !panelsCollide(panelRenderedFrame(resizeStartRef.current), panelRenderedFrame(other), 0)
+          && panelsCollide(panelRenderedFrame({ ...resizeStartRef.current, ...target }), panelRenderedFrame(other), 0))) {
+          onGuidesChangeRef.current?.([]);
+          return;
         }
-
-        // 다른 패널들과의 리사이즈 스냅
-        for (const other of otherPanelsRef.current) {
-          // 너비(오른쪽 끝) 스냅
-          if (Math.abs(rightEdge - (other.x - PANEL_GAP)) < SNAP_THRESHOLD) {
-            targetW = other.x - PANEL_GAP - panelRef.current.x;
-            activeGuides.push({ type: 'vertical', pos: other.x - PANEL_GAP });
-          } else if (Math.abs(rightEdge - (other.x + other.width)) < SNAP_THRESHOLD) {
-            targetW = other.x + other.width - panelRef.current.x;
-            activeGuides.push({ type: 'vertical', pos: other.x + other.width });
-          } else if (Math.abs(rightEdge - other.x) < SNAP_THRESHOLD) {
-            targetW = other.x - panelRef.current.x;
-            activeGuides.push({ type: 'vertical', pos: other.x });
-          }
-
-          // 높이(아래쪽 끝) 스냅
-          if (Math.abs(bottomEdge - (other.y - PANEL_GAP)) < SNAP_THRESHOLD) {
-            targetH = other.y - PANEL_GAP - panelRef.current.y;
-            activeGuides.push({ type: 'horizontal', pos: other.y - PANEL_GAP });
-          } else if (Math.abs(bottomEdge - (other.y + other.height)) < SNAP_THRESHOLD) {
-            targetH = other.y + other.height - panelRef.current.y;
-            activeGuides.push({ type: 'horizontal', pos: other.y + other.height });
-          } else if (Math.abs(bottomEdge - other.y) < SNAP_THRESHOLD) {
-            targetH = other.y - panelRef.current.y;
-            activeGuides.push({ type: 'horizontal', pos: other.y });
-          }
-        }
-
-        targetW = Math.max(80, targetW);
-        targetH = Math.max(80, targetH);
-        onResizeRef.current(panelRef.current.id, { width: targetW, height: targetH });
-        if (onGuidesChangeRef.current) {
-          onGuidesChangeRef.current(activeGuides);
-        }
+        resizeResultRef.current = target;
+        setGeometryPreview(target);
+        onGuidesChangeRef.current?.(guides);
       },
-      onPanResponderRelease: () => {
+      onPanResponderRelease: (_, g) => {
+        if (!resizeDraggedRef.current && Math.abs(g.dx) < 5 && Math.abs(g.dy) < 5) {
+          resizeResultRef.current = null;
+          setGeometryPreview(null);
+          setResizingSide(null);
+          toggleReshaping();
+        } else { finishResize(); }
         if (onGuidesChangeRef.current) {
           onGuidesChangeRef.current([]);
         }
       },
+      onPanResponderTerminate: finishResize,
     })
   ).current;
 
   const styleConfig = MODE_STYLE[mode ?? 'null'];
   const isDraw = mode === 'draw';
   const isDrawingOrEditing = isDraw;
+  // Render a focused outline at final screen size, outside the panel's
+  // transformed subtree. Crop to visible vertices rather than the retained
+  // (potentially much larger) ink frame.
+  const focusedOutline = focused ? (() => {
+    const sheetScale = Math.max(0.01, canvasScale / Math.max(0.01, displayScale));
+    const points = corners.map(point => ({
+      x: (2 + point.x * (panel.width - 4)) * displayScale * sheetScale,
+      y: (2 + point.y * (panel.height - 4)) * displayScale * sheetScale,
+    }));
+    const minX = Math.min(...points.map(point => point.x)), minY = Math.min(...points.map(point => point.y));
+    const stroke = (mode ? 3 : panel.borderWidth ?? 2) * sheetScale;
+    const padding = stroke / 2 + 1;
+    return {
+      sheetScale,
+      left: (displayPosition?.x ?? panel.x) + panel.width * (1 - displayScale) / 2 + (minX - padding) / sheetScale,
+      top: (displayPosition?.y ?? panel.y) + panel.height * (1 - displayScale) / 2 + (minY - padding) / sheetScale,
+      width: Math.max(...points.map(point => point.x)) - minX + padding * 2,
+      height: Math.max(...points.map(point => point.y)) - minY + padding * 2,
+      points: points.map(point => `${point.x - minX + padding},${point.y - minY + padding}`).join(' '),
+    };
+  })() : null;
+  const outlineStrokeScale = focusedOutline?.sheetScale ?? 1;
+  const outlineDash = (values: number[]) => values.map(value => value * outlineStrokeScale).join(' ');
+
+  // This overlay is a sibling of the magnified panel. It already avoids the
+  // panel zoom; keep the sheet's normal fit scale so icons match their
+  // unzoomed screen size. Anchor to the actual top-left vertex, not min X.
+  const focusedToolbarStyle = {
+    left: (displayPosition?.x ?? panel.x) + panel.width * (1 - displayScale) / 2
+      + (2 + corners[0].x * (panel.width - 4)) * displayScale,
+    top: (displayPosition?.y ?? panel.y) + panel.height * (1 - displayScale) / 2
+      + (2 + corners[0].y * (panel.height - 4)) * displayScale
+      - (visualButtonSize + 10),
+    right: undefined,
+    width: visualButtonSize * 3 + 12 + (visualButtonSize + 6) * 0.35,
+    height: visualButtonSize,
+  };
+  const outlineWidth = focusedOutline?.width ?? panel.width;
+  const outlineHeight = focusedOutline?.height ?? panel.height;
+  const focusedVectorStyle = focusedOutline ? {
+    left: focusedOutline.left, top: focusedOutline.top, opacity: hidden ? 0 : 1,
+    transformOrigin: 'top left' as const, transform: [{ scale: 1 / focusedOutline.sheetScale }],
+  } : undefined;
+  const focusedPaper = focusedOutline && <Svg pointerEvents="none" testID="focused-panel-paper-layer"
+    style={[{ position: 'absolute', zIndex: stackOrder }, focusedVectorStyle]}
+    width={outlineWidth} height={outlineHeight} viewBox={`0 0 ${outlineWidth} ${outlineHeight}`}>
+    <Polygon testID="panel-paper" points={focusedOutline.points} fill={transparentBackground ? 'none' : '#FFFFFF'} />
+  </Svg>;
+  const panelOutline = (
+    <Svg pointerEvents="none" testID="panel-outline-layer"
+      style={[{ position: 'absolute', left: -2, top: -2, zIndex: focused ? stackOrder + 1 : 2 }, focusedVectorStyle]}
+      width={outlineWidth} height={outlineHeight} viewBox={`0 0 ${outlineWidth} ${outlineHeight}`}>
+      {borderStyle !== 'none' && <Polygon testID="panel-border" points={focusedOutline?.points ?? shapePoints} fill="none"
+        stroke={mode ? styleConfig.border : panel.borderColor ?? '#1E293B'}
+        strokeWidth={(mode ? 3 : panel.borderWidth ?? 2) * outlineStrokeScale}
+        strokeDasharray={borderStyle === 'dashed' ? outlineDash([8, 6]) : borderStyle === 'dotted' ? outlineDash([0.1, 6]) : undefined}
+        strokeLinecap={borderStyle === 'dotted' ? 'round' : 'butt'} />}
+      {mode && borderStyle === 'none' && <Polygon points={focusedOutline?.points ?? shapePoints} fill="none"
+        stroke={styleConfig.border} strokeWidth={3 * outlineStrokeScale} strokeDasharray={outlineDash([4, 5])} opacity={0.65} />}
+    </Svg>
+  );
+  const panelControls = mode && !hidden ? (
+        <View testID="panel-toolbar" style={[styles.topBar, focused ? focusedToolbarStyle : { top: toolbar.top, left: toolbar.left, right: toolbar.right }]} pointerEvents="box-none">
+          <View testID="panel-left-controls" style={{ flexDirection: 'row', gap: 6 }}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel={`Panel mode: ${mode === 'draw' ? 'Draw' : 'Layout'}`}
+            accessibilityHint="Switch between Layout and Draw. Use the lasso in the drawing palette to select strokes."
+            style={[styles.circleButton, buttonDimensions, { marginRight: (visualButtonSize + 6) * 0.35, backgroundColor: styleConfig.bg, borderColor: styleConfig.buttonBorder }]}
+            onPress={() => {
+              setReshaping(false);
+              setShapePreview(null);
+              setBorderMenu(false);
+              isAlreadySelectedRef.current = false;
+              lastTapRef.current = 0;
+              onModeChange(storedPanel.id);
+            }}
+            activeOpacity={0.9}
+            hitSlop={{ top: 8 + touchPadding, right: 8 + touchPadding, bottom: 8 + touchPadding, left: 8 + touchPadding }}
+          >
+            {mode === 'layout' && <Move size={iconSize} color={styleConfig.icon} strokeWidth={2.2} />}
+            {mode === 'draw' && <Pen size={iconSize} color={styleConfig.icon} strokeWidth={2.2} />}
+          </TouchableOpacity>
+
+          {mode === 'layout' && onBorderStyleChange && <TouchableOpacity accessibilityRole="button"
+            activeOpacity={0.9}
+            hitSlop={iconHitSlop} accessibilityLabel={`Panel border: ${borderStyle}`} accessibilityState={{ expanded: borderMenu }}
+            onPress={() => setBorderMenu(value => !value)} style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder }]}>
+            <PanelBorderIcon value={borderStyle} size={iconSize} color={styleConfig.icon} />
+          </TouchableOpacity>}
+          {mode === 'draw' && onToggleFocus && <TouchableOpacity accessibilityRole="button"
+            activeOpacity={0.9}
+            hitSlop={iconHitSlop} accessibilityLabel={focused ? 'Zoom out panel' : 'Zoom in panel'} onPress={onToggleFocus}
+            style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder }]}>
+            {focused ? <ZoomOut size={iconSize} color={styleConfig.icon} strokeWidth={2.2} /> : <ZoomIn size={iconSize} color={styleConfig.icon} strokeWidth={2.2} />}
+          </TouchableOpacity>}
+          {mode === 'draw' && onImportTracingImage && <TouchableOpacity
+            accessibilityRole="button" hitSlop={iconHitSlop} accessibilityLabel="Import panel reference image"
+            accessibilityHint="Choose an image for this panel from Photos or Files"
+            accessibilityState={{ disabled: importingTracingImage, busy: importingTracingImage }}
+            disabled={importingTracingImage} onPress={() => onImportTracingImage(panel.id)}
+            style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder }, importingTracingImage && styles.importing]} activeOpacity={0.9}>
+            {importingTracingImage ? <ActivityIndicator size="small" color={styleConfig.icon} />
+              : <ImageIcon size={iconSize} color={styleConfig.icon} strokeWidth={2.2} />}
+          </TouchableOpacity>}
+          </View>
+          <View style={{ flexDirection: 'row', gap: 6 }}>
+          {mode === 'layout' && (
+            <TouchableOpacity
+              accessibilityRole="button"
+              hitSlop={iconHitSlop} accessibilityLabel="Delete panel"
+              style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder }]}
+              onPress={() => onDelete(panel.id)}
+              activeOpacity={0.9}
+            >
+              <Trash2 size={iconSize} color={styleConfig.icon} strokeWidth={2.2} />
+            </TouchableOpacity>
+          )}
+          </View>
+          {borderMenu && mode === 'layout' && <View testID="panel-border-menu" style={[styles.borderMenu, { left: Math.min(toolbar.buttonSize + 6, Math.max(0, panel.width - 4 - toolbar.left - toolbar.right - 44)) }]}>
+            {(['solid', 'dashed', 'dotted', 'none'] as PanelBorderStyle[]).map(value => <TouchableOpacity key={value}
+              accessibilityRole="button" accessibilityLabel={`Use ${value} panel border`} accessibilityState={{ selected: borderStyle === value }}
+              style={[styles.borderOption, borderStyle === value && { backgroundColor: '#EAF1FF' }]}
+              onPress={() => { onBorderStyleChange?.(panel.id, value); setBorderMenu(false); }}>
+              <PanelBorderIcon value={value} color={styleConfig.icon} />
+            </TouchableOpacity>)}
+          </View>}
+        </View>
+  ) : null;
 
   return (
+    <>
+    {focusedPaper}
     <View
+      testID="panel-container"
+      pointerEvents={interactive && !hidden ? 'box-none' : 'none'}
+      accessibilityElementsHidden={hidden}
+      importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
       style={[
         styles.panelContainer,
         transparentBackground && styles.transparentPanel,
         {
-          left: panel.x,
-          top: panel.y,
+          left: displayPosition?.x ?? panel.x,
+          top: displayPosition?.y ?? panel.y,
+          transform: [{ scale: displayScale }],
+          opacity: hidden ? 0 : 1,
           width: panel.width,
           height: panel.height,
           zIndex: stackOrder,
           elevation: 3 + stackOrder,
-          borderColor: styleConfig.border,
-          borderStyle: 'solid', // 모든 모드에서 점선 없이 깔끔한 실선 유지
+          borderColor: 'transparent',
+          backgroundColor: 'transparent',
+          shadowOpacity: 0,
+          borderStyle: 'solid',
           borderWidth: PANEL_BORDER_WIDTH,
         },
       ]}
     >
       {/* 1. 패널 내부 캔버스: Draw mode includes PencilKit’s pen, eraser and lasso tools */}
-      <View style={[styles.canvasWrapper, clearCanvas && styles.transparentCanvas]}>
+      {!focused && <Svg pointerEvents="none" style={{ position: 'absolute', left: -2, top: -2, zIndex: 0 }} width={panel.width} height={panel.height}
+        viewBox={`0 0 ${panel.width} ${panel.height}`}>
+        <Polygon testID="panel-paper" points={shapePoints} fill={transparentBackground ? 'none' : '#FFFFFF'} />
+      </Svg>}
+      <PanelSurface pointerEvents="box-none" clipContent={referenceVisible} polygonPoints={corners} style={styles.canvasWrapper}>
         {referenceVisible && reference && <View pointerEvents="none" style={StyleSheet.absoluteFill}>
           <Image testID={`panel-reference-image-${panel.id}`} source={{ uri: reference.uri }} resizeMode="stretch"
             style={{ position: 'absolute',left: reference.x,top: reference.y,width: reference.width,height: reference.height,
@@ -331,16 +494,23 @@ export const Panel: React.FC<PanelProps> = ({
           isDrawingActive={isDrawingOrEditing && !tracingEditing}
           drawingTool="pen"
           panelId={panel.id}
+          selectionTimestamp={selectionTimestamp}
+          renderScale={focused ? Math.max(1, canvasScale) : 1}
+          polygonPoints={corners}
+          shapeFrame={nativeShapeFrame}
           drawingData={panel.drawingData}
-          transparentBackground={clearCanvas}
+          transparentBackground={true}
           onDrawingChange={(e) => {
             if (onDrawingUpdate) {
-              onDrawingUpdate(panel.id, e.nativeEvent.drawingData);
+              onDrawingUpdate(panel.id, e.nativeEvent.drawingData, e.nativeEvent.geometry);
             }
           }}
         />
 
-      </View>
+        {!isDrawingOrEditing && !tracingEditing && <View style={StyleSheet.absoluteFill} {...movePR.panHandlers} />}
+      </PanelSurface>
+
+      {!focused && panelOutline}
 
       <View pointerEvents="box-none" style={styles.referenceControls}>
         {panel.tracingImage && reference && onTracingImageChange && onTracingEditingChange && <TracingImageControls
@@ -350,65 +520,31 @@ export const Panel: React.FC<PanelProps> = ({
           onCommit={image => onTracingImageChange(panel.id, image)} />}
       </View>
 
-      {/* Selection must not resize or shift the live PencilKit canvas. */}
-      {mode && <View pointerEvents="none" style={[styles.selectedOutline, { borderColor: styleConfig.border }]} />}
-
-      {/* 2. 레이아웃 모드/선택 상태일 때만 동작하는 이동 오버레이 */}
-      {!isDrawingOrEditing && !tracingEditing && (
-        <View style={StyleSheet.absoluteFill} {...movePR.panHandlers} />
-      )}
-
-      {/* 3. 모드 전환 및 삭제 툴 버튼들 */}
-      {mode && (
-        <View style={styles.topBar} pointerEvents="box-none">
-          <TouchableOpacity
-            accessibilityRole="button"
-            accessibilityLabel={`Panel mode: ${mode === 'draw' ? 'Draw' : 'Layout'}`}
-            accessibilityHint="Switch between Layout and Draw. Use the lasso in the drawing palette to select strokes."
-            style={[styles.modeBtn, { backgroundColor: styleConfig.bg }]}
-            onPress={() => onModeChange(panel.id)}
-            activeOpacity={0.75}
-            hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-          >
-            {mode === 'layout' && <Move size={15} color={styleConfig.icon} />}
-            {mode === 'draw' && <Pen size={15} color={styleConfig.icon} />}
-          </TouchableOpacity>
-
-          {mode === 'layout' && (
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Delete panel"
-              style={styles.deleteBtn}
-              onPress={() => onDelete(panel.id)}
-              activeOpacity={0.75}
-            >
-              <Trash2 size={13} color="#EF4444" />
-            </TouchableOpacity>
-          )}
-          {mode === 'draw' && onImportTracingImage && <TouchableOpacity
-            accessibilityRole="button" accessibilityLabel="Import panel reference image"
-            accessibilityHint="Choose an image for this panel from Photos or Files"
-            accessibilityState={{ disabled: importingTracingImage, busy: importingTracingImage }}
-            disabled={importingTracingImage} onPress={() => onImportTracingImage(panel.id)}
-            style={[styles.deleteBtn,styles.imageBtn,importingTracingImage && styles.importing]} activeOpacity={0.75}>
-            {importingTracingImage ? <ActivityIndicator size="small" color="#EA8A23" />
-              : <ImageIcon size={15} color="#EA8A23" />}
-          </TouchableOpacity>}
-        </View>
-      )}
+      {!focused && panelControls}
 
       {/* 4. 리사이즈 핸들 */}
-      {mode === 'layout' && !tracingEditing && (
-        <View style={styles.resizeHandle} {...resizePR.panHandlers}>
+      {mode === 'layout' && !tracingEditing && !reshaping && (
+        <View accessibilityRole="button" accessibilityLabel="Resize or reshape panel" onAccessibilityTap={toggleReshaping} accessibilityHint="Drag to resize. Tap to reshape this corner." style={[styles.resizeHandle, { bottom: undefined, right: undefined, left: corners[handleIndex].x * (panel.width - 4) - 14, top: corners[handleIndex].y * (panel.height - 4) - 14 }]} {...resizePR.panHandlers}>
           <View style={styles.resizeKnob} />
         </View>
       )}
+      {mode === 'layout' && !tracingEditing && reshaping && <PanelCornerHandle
+        panel={{ ...panel, corners }} side={handleSide} scale={canvasScale} otherPanels={otherPanels} sheetBounds={sheetBounds}
+        onPreview={setShapePreview} onCommit={value => {
+          Promise.resolve(onShapeChange?.(panel.id, value))
+            .finally(() => setShapePreview(current => current === value ? null : current));
+        }} onClose={() => setReshaping(false)} />}
     </View>
+    {focused && panelOutline}
+    {focused && panelControls}
+    </>
   );
 };
 
 const styles = StyleSheet.create({
-  imageBtn: { backgroundColor: '#FFF5E8',borderColor: '#FED7AA' },
+  borderMenu: { position: 'absolute', top: 42, left: 0, width: 44, borderRadius: 12, backgroundColor: '#FFFFFF',
+    borderWidth: 1, borderColor: '#93B4ED', padding: 4, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
+  borderOption: { alignItems: 'center', justifyContent: 'center', padding: 5, borderRadius: 8 },
   importing: { opacity: 0.5 },
   referenceControls: { position: 'absolute',top: 2,left: 2,right: 2,bottom: 2,overflow: 'hidden',zIndex: 45 },
   transparentPanel: { backgroundColor: 'transparent', shadowOpacity: 0 },
@@ -426,18 +562,9 @@ const styles = StyleSheet.create({
   canvasWrapper: {
     flex: 1,
     overflow: 'hidden',
-    backgroundColor: '#FFFFFF',
-    borderRadius: 1,
-  },
-  selectedOutline: {
-    position: 'absolute',
-    top: -PANEL_BORDER_WIDTH,
-    left: -PANEL_BORDER_WIDTH,
-    right: -PANEL_BORDER_WIDTH,
-    bottom: -PANEL_BORDER_WIDTH,
-    borderWidth: ACTIVE_BORDER_WIDTH,
-    borderRadius: 2,
+    backgroundColor: 'transparent',
     zIndex: 1,
+    borderRadius: 1,
   },
   topBar: {
     position: 'absolute',
@@ -449,34 +576,29 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     zIndex: 60,
   },
-  modeBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  circleButton: {
+    width: 35,
+    height: 35,
+    borderRadius: 17.5,
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.9)',
-    shadowColor: '#000',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#94A3B8',
+    borderWidth: 1.25,
+    // A soft white halo separates controls from ink without blurring the art
+    // or adding an overlay that could intercept drawing gestures.
+    boxShadow: [
+      { offsetX: 0, offsetY: 2, blurRadius: 3, color: 'rgba(0,0,0,0.28)' },
+      { offsetX: 0, offsetY: 0, blurRadius: 9, spreadDistance: 4, color: 'rgba(255,255,255,0.95)' },
+    ],
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
+    shadowOpacity: 0,
+    shadowRadius: 3,
     elevation: 2,
-  },
-  deleteBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#FEE2E2',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#FECACA',
   },
   resizeHandle: {
     position: 'absolute',
-    bottom: RESIZE_HANDLE_OFFSET,
-    right: RESIZE_HANDLE_OFFSET,
     width: RESIZE_HANDLE_SIZE,
     height: RESIZE_HANDLE_SIZE,
     justifyContent: 'center',
@@ -484,12 +606,12 @@ const styles = StyleSheet.create({
     zIndex: 40,
   },
   resizeKnob: {
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: '#4ECDC4',
+    width: 14 * PANEL_ICON_SCALE * 1.2,
+    height: 14 * PANEL_ICON_SCALE * 1.2,
+    borderRadius: 7 * PANEL_ICON_SCALE * 1.2,
+    backgroundColor: '#FFFFFF',
     borderWidth: 2,
-    borderColor: '#FFFFFF',
+    borderColor: '#3B82F6',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,

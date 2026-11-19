@@ -20,12 +20,107 @@ class RNPencilKitManager: RCTViewManager {
   }
 }
 
+// Shared by the live clipping surface and saved/read/export rendering.
+enum CraftoonPanelShape {
+  static func points(_ value: Any?) -> [CGPoint] {
+    let rectangle = [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+    guard let raw = value as? [[String: Any]], raw.count == 4 else { return rectangle }
+    var points: [CGPoint] = []
+    for item in raw {
+      guard let x = item["x"] as? NSNumber, let y = item["y"] as? NSNumber,
+            x.doubleValue.isFinite, y.doubleValue.isFinite,
+            (-0.000001...1.000001).contains(x.doubleValue), (-0.000001...1.000001).contains(y.doubleValue) else { return rectangle }
+      points.append(CGPoint(x: max(0, min(1, x.doubleValue)), y: max(0, min(1, y.doubleValue))))
+    }
+    for i in 0..<4 {
+      let a = points[i], b = points[(i + 1) % 4], c = points[(i + 2) % 4]
+      if (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x) <= 0.002 { return rectangle }
+    }
+    return points
+  }
+
+  static func isRectangle(_ points: [CGPoint]) -> Bool {
+    points == [CGPoint(x: 0, y: 0), CGPoint(x: 1, y: 0), CGPoint(x: 1, y: 1), CGPoint(x: 0, y: 1)]
+  }
+
+  static func path(_ points: [CGPoint], in rect: CGRect) -> UIBezierPath {
+    let path = UIBezierPath()
+    for (i, point) in points.enumerated() {
+      let p = CGPoint(x: rect.minX + point.x * rect.width, y: rect.minY + point.y * rect.height)
+      if i == 0 { path.move(to: p) } else { path.addLine(to: p) }
+    }
+    path.close()
+    return path
+  }
+}
+
+@objc(CraftoonPanelClipManager)
+class CraftoonPanelClipManager: RCTViewManager {
+  override func view() -> UIView! { CraftoonPanelClipView() }
+  override static func requiresMainQueueSetup() -> Bool { true }
+}
+
+class CraftoonPanelClipView: RCTView {
+  private let shapeMask = CAShapeLayer()
+  private var maskedBounds: CGRect?
+  private var maskedPoints: [CGPoint] = []
+  private var maskedContent: Bool?
+  @objc var clipContent: Bool = true { didSet { if clipContent != oldValue { setNeedsLayout() } } }
+  @objc var polygonPoints: NSArray = [] { didSet { setNeedsLayout() } }
+
+  override init(frame: CGRect) {
+    super.init(frame: frame)
+    shapeMask.fillColor = UIColor.black.cgColor
+    clipsToBounds = true
+    layer.mask = shapeMask
+  }
+  required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+  override func layoutSubviews() {
+    super.layoutSubviews()
+    let points = CraftoonPanelShape.points(polygonPoints)
+    guard maskedBounds != bounds || maskedPoints != points || maskedContent != clipContent else { return }
+    maskedBounds = bounds
+    maskedPoints = points
+    maskedContent = clipContent
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    if !clipContent || CraftoonPanelShape.isRectangle(points) {
+      layer.mask = nil
+    } else {
+      shapeMask.frame = bounds
+      shapeMask.path = CraftoonPanelShape.path(points, in: bounds).cgPath
+      layer.mask = shapeMask
+    }
+    CATransaction.commit()
+  }
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    super.point(inside: point, with: event) && CraftoonPanelShape.path(CraftoonPanelShape.points(polygonPoints), in: bounds).contains(point)
+  }
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    // RCTView can hit-test children outside its own pointInside result.
+    guard self.point(inside: point, with: event) else { return nil }
+    return super.hitTest(point, with: event)
+  }
+}
+
 // Store complete comics in Application Support, outside temporary/cache storage.
 @objc(CraftoonLibrary)
 class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
   private var tracingPicker: CraftoonTracingImagePicker?
   private var mailCompletion: ((Bool, Error?) -> Void)?
   private let storageQueue = CraftoonInkStore.queue
+  private let storageRoot: URL?
+
+  override init() {
+    storageRoot = nil
+    super.init()
+  }
+
+  init(storageRoot: URL) {
+    self.storageRoot = storageRoot
+    super.init()
+  }
 
   @objc static func requiresMainQueueSetup() -> Bool { false }
 
@@ -90,7 +185,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
   private func withProAccess(reject: @escaping RCTPromiseRejectBlock, action: @escaping () -> Void) {
     Task {
       guard await CraftoonPurchaseStore.shared.hasProAccess() else {
-        reject("PRO_REQUIRED", "Craftoon Pro is required for saving and exporting comics.", nil)
+        reject("PRO_REQUIRED", "Craftoon Pro is required for exporting comics.", nil)
         return
       }
       DispatchQueue.main.async(execute: action)
@@ -192,7 +287,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
   }
 
   private func directory() throws -> URL {
-    let root = try FileManager.default.url(for: .applicationSupportDirectory,
+    let root = try storageRoot ?? FileManager.default.url(for: .applicationSupportDirectory,
       in: .userDomainMask, appropriateFor: nil, create: true)
     let directory = root.appendingPathComponent("CraftoonLibrary", isDirectory: true)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -271,9 +366,10 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
           let rect = CGRect(x: number(panel, "x"), y: number(panel, "y"),
                             width: number(panel, "width"), height: number(panel, "height"))
           guard rect.width > 0, rect.height > 0 else { continue }
+          context.saveGState()
           let border = max(0, number(panel, "borderWidth", 2))
-          let outline = UIBezierPath(roundedRect: rect.insetBy(dx: border / 2, dy: border / 2),
-                                     cornerRadius: number(panel, "borderRadius", 2))
+          let points = CraftoonPanelShape.points(panel["corners"])
+          let outline = CraftoonPanelShape.path(points, in: rect.insetBy(dx: border / 2, dy: border / 2))
           UIColor.white.setFill()
           outline.fill()
           let content = rect.insetBy(dx: border, dy: border)
@@ -281,14 +377,22 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
              let drawing = (useLiveInk ? RNPencilKitView.drawingCache[panel["id"] as? String ?? ""] : nil)
                ?? CraftoonInkStore.drawing(panel["drawingData"] as? String ?? "") {
             context.saveGState()
-            context.clip(to: content)
+            CraftoonPanelShape.path(points, in: content).addClip()
             let ink = drawing.image(from: CGRect(origin: .zero, size: content.size), scale: max(0.05, scale * format.scale))
             ink.draw(in: content)
             context.restoreGState()
           }
           color(panel["borderColor"], fallback: UIColor.darkGray).setStroke()
           outline.lineWidth = border
-          if border > 0 { outline.stroke() }
+          switch panel["borderStyle"] as? String ?? "solid" {
+          case "dashed": outline.setLineDash([8, 6], count: 2, phase: 0)
+          case "dotted":
+            outline.lineCapStyle = .round
+            outline.setLineDash([0.1, 6], count: 2, phase: 0)
+          default: break
+          }
+          if border > 0 && panel["borderStyle"] as? String != "none" { outline.stroke() }
+          context.restoreGState()
         }
         for bubble in bubbles {
           let rect = CGRect(x: number(bubble, "x"), y: number(bubble, "y"),
@@ -302,9 +406,11 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
           outline.stroke()
           let paragraph = NSMutableParagraphStyle()
           paragraph.alignment = .center
+          let baseFont = UIFont.systemFont(ofSize: number(bubble, "fontSize", 14), weight: .bold)
+          let roundedFont = baseFont.fontDescriptor.withDesign(.rounded)
+            .map { UIFont(descriptor: $0, size: baseFont.pointSize) } ?? baseFont
           let attributes: [NSAttributedString.Key: Any] = [
-            .font: UIFont(name: "ChalkboardSE-Bold", size: number(bubble, "fontSize", 14))
-              ?? UIFont.systemFont(ofSize: number(bubble, "fontSize", 16), weight: .bold),
+            .font: roundedFont,
             .foregroundColor: color(bubble["color"], fallback: .darkGray),
             .paragraphStyle: paragraph
           ]
@@ -516,7 +622,8 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
       CraftoonInkStore.queue.async {
         do {
           try CraftoonInkStore.persist(capture.drawings)
-          DispatchQueue.main.async { resolve(capture.pages) }
+          let pages = CraftoonInkStore.resolvingStrokePresence(capture.pages)
+          DispatchQueue.main.async { resolve(pages) }
         } catch { reject("CAPTURE_FAILED", "Could not preserve the current canvas.", error) }
       }
     }
@@ -539,40 +646,72 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     }
   }
 
+  // Called only on the serial storage queue: two concurrent new saves (or an
+  // Undo restore racing with Save) cannot both consume the single Free slot.
+  private func validateSaveAccess(id: String, pageCount: Int?, isPro: Bool) throws {
+    guard !isPro else { return }
+    if let pageCount, pageCount > 4 {
+      throw NSError(domain: "CraftoonAccess", code: 1, userInfo: [NSLocalizedDescriptionKey:
+        "Free includes 4 pages per comic. Unlock Pro to save more pages."])
+    }
+    let destination = try storyURL(id)
+    if FileManager.default.fileExists(atPath: destination.path) { return }
+    let files = try FileManager.default.contentsOfDirectory(at: directory(), includingPropertiesForKeys: nil)
+    let occupied = files.contains { url in
+      guard url.pathExtension == "json", let data = try? Data(contentsOf: url),
+            let saved = try? decodeComicDocument(data), saved["id"] is String,
+            saved["pages"] is [[String: Any]] else { return false }
+      return true
+    }
+    if occupied {
+      throw NSError(domain: "CraftoonAccess", code: 2, userInfo: [NSLocalizedDescriptionKey:
+        "Free includes 1 saved comic. Unlock Pro to save more."])
+    }
+  }
+
   @objc func saveStory(_ story: NSDictionary,
                        resolver resolve: @escaping RCTPromiseResolveBlock,
                        rejecter reject: @escaping RCTPromiseRejectBlock) {
-    // Snapshot native drawings on the main queue. A just-finished stroke may not
-    // have reached React yet when the person presses Save or leaves the canvas.
-    withProAccess(reject: reject) {
-      var snapshot = story as? [String: Any] ?? [:]
-      guard let id = snapshot["id"] as? String,
-            var pages = snapshot["pages"] as? [[String: Any]], !pages.isEmpty else {
-        reject("SAVE_FAILED", "The comic has no pages.", nil)
-        return
-      }
-      let capture = CraftoonInkStore.capture(pages)
-      pages = capture.pages
-      snapshot["pages"] = pages
-      snapshot["version"] = 1
-      snapshot["storageVersion"] = 4
-      let document = snapshot
-      self.storageQueue.async {
-        do {
-          try CraftoonInkStore.persist(capture.drawings)
-          var savedDocument = document
-          let destination = try self.storyURL(id)
-          let existing = (try? Data(contentsOf: destination)).flatMap { try? decodeComicDocument($0) }
-          savedDocument["createdAt"] = self.creationTimestamp(existing ?? document, at: destination)
-          savedDocument["thumbnailData"] = self.thumbnail(document)
-          savedDocument["thumbnailVersion"] = 3
-          let data = try encodeComicDocument(savedDocument)
-          try data.write(to: destination, options: .atomic)
-          DispatchQueue.main.async {
-            CraftoonDraftRecovery.shared.markSaved(id: id, title: savedDocument["title"] as? String ?? "Untitled comic")
-            resolve(self.summary(savedDocument))
+    Task {
+      let isPro = await CraftoonPurchaseStore.shared.hasProAccess()
+      DispatchQueue.main.async {
+        // Capture current native ink, then validate capacity and write atomically
+        // on the same queue. Existing Free files remain editable and autosaved.
+        var snapshot = story as? [String: Any] ?? [:]
+        guard let id = snapshot["id"] as? String,
+              var pages = snapshot["pages"] as? [[String: Any]], !pages.isEmpty else {
+          reject("SAVE_FAILED", "The comic has no pages.", nil)
+          return
+        }
+        let capture = CraftoonInkStore.capture(pages)
+        pages = capture.pages
+        snapshot["pages"] = pages
+        snapshot["version"] = 1
+        snapshot["storageVersion"] = 4
+        let document = snapshot
+        let pageCount = pages.count
+        self.storageQueue.async {
+          do {
+            try self.validateSaveAccess(id: id, pageCount: pageCount, isPro: isPro)
+            try CraftoonInkStore.persist(capture.drawings)
+            var savedDocument = document
+            let destination = try self.storyURL(id)
+            let existing = (try? Data(contentsOf: destination)).flatMap { try? decodeComicDocument($0) }
+            savedDocument["createdAt"] = self.creationTimestamp(existing ?? document, at: destination)
+            savedDocument["thumbnailData"] = self.thumbnail(document)
+            savedDocument["thumbnailVersion"] = 3
+            let data = try encodeComicDocument(savedDocument)
+            try data.write(to: destination, options: .atomic)
+            DispatchQueue.main.async {
+              CraftoonDraftRecovery.shared.markSaved(id: id, title: savedDocument["title"] as? String ?? "Untitled comic")
+              resolve(self.summary(savedDocument))
+            }
+          } catch {
+            let limited = (error as NSError).domain == "CraftoonAccess"
+            reject(limited ? "PRO_REQUIRED" : "SAVE_FAILED",
+              limited ? error.localizedDescription : "Could not save this comic.", error)
           }
-        } catch { reject("SAVE_FAILED", "Could not save this comic.", error) }
+        }
       }
     }
   }
@@ -634,28 +773,35 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
   @objc func restoreStory(_ token: String,
                           resolver resolve: @escaping RCTPromiseResolveBlock,
                           rejecter reject: @escaping RCTPromiseRejectBlock) {
-    storageQueue.async {
-      do {
-        guard UUID(uuidString: token) != nil else {
-          throw NSError(domain: "CraftoonLibrary", code: 3,
-            userInfo: [NSLocalizedDescriptionKey: "Invalid recovery token."])
+    Task {
+      let isPro = await CraftoonPurchaseStore.shared.hasProAccess()
+      self.storageQueue.async {
+        do {
+          guard UUID(uuidString: token) != nil else {
+            throw NSError(domain: "CraftoonLibrary", code: 3,
+              userInfo: [NSLocalizedDescriptionKey: "Invalid recovery token."])
+          }
+          let source = try self.trashDirectory().appendingPathComponent(token).appendingPathExtension("json")
+          let data = try Data(contentsOf: source)
+          var story = try decodeComicDocument(data)
+          guard let id = story["id"] as? String else {
+            throw NSError(domain: "CraftoonLibrary", code: 4,
+              userInfo: [NSLocalizedDescriptionKey: "This comic file is invalid."])
+          }
+          // Undo must respect file capacity, while preserving older long comics.
+          try self.validateSaveAccess(id: id, pageCount: nil, isPro: isPro)
+          if (story["createdAt"] as? String ?? "").isEmpty {
+            story["createdAt"] = self.creationTimestamp(story, at: source)
+            try encodeComicDocument(story).write(to: source, options: .atomic)
+          }
+          try FileManager.default.moveItem(at: source, to: self.storyURL(id))
+          resolve(self.summary(story))
+        } catch {
+          let limited = (error as NSError).domain == "CraftoonAccess"
+          reject(limited ? "PRO_REQUIRED" : "RESTORE_FAILED",
+            limited ? error.localizedDescription : "Could not restore this comic.", error)
         }
-        let source = try self.trashDirectory().appendingPathComponent(token).appendingPathExtension("json")
-        let data = try Data(contentsOf: source)
-        var story = try decodeComicDocument(data)
-        let needsCreationDate = (story["createdAt"] as? String ?? "").isEmpty
-        if needsCreationDate {
-          story["createdAt"] = self.creationTimestamp(story, at: source)
-          try encodeComicDocument(story).write(to: source, options: .atomic)
-        }
-        guard let id = story["id"] as? String else {
-          throw NSError(domain: "CraftoonLibrary", code: 4,
-            userInfo: [NSLocalizedDescriptionKey: "This comic file is invalid."])
-        }
-        // moveItem refuses to overwrite an existing comic with the same ID.
-        try FileManager.default.moveItem(at: source, to: self.storyURL(id))
-        resolve(self.summary(story))
-      } catch { reject("RESTORE_FAILED", "Could not restore this comic.", error) }
+      }
     }
   }
 
@@ -1475,6 +1621,12 @@ enum CraftoonInkStore {
 
   // Called on main. Captures PKDrawing values without serializing any strokes.
   static func capture(_ source: [[String: Any]]) -> CraftoonInkCapture {
+    let diagnosticStart = CraftoonPanelPerformance.paletteEnabled ? CraftoonPanelPerformance.now() : 0
+    defer {
+      if diagnosticStart > 0, CraftoonPanelPerformance.now() - diagnosticStart > 16 {
+        CraftoonPanelPerformance.write(["stage": "ink_capture_slow", "durationMs": CraftoonPanelPerformance.now() - diagnosticStart])
+      }
+    }
     RNPencilKitView.prepareForCapture()
     var pages = source
     var drawings: [(String, PKDrawing)] = []
@@ -1483,6 +1635,7 @@ enum CraftoonInkStore {
       for index in panels.indices {
         guard let id = panels[index]["id"] as? String else { continue }
         if let drawing = RNPencilKitView.drawingCache[id] {
+          panels[index]["drawingHasStrokes"] = !drawing.strokes.isEmpty
           let existing = latestReferences[id].flatMap { $0.hasPrefix(prefix) ? $0 : nil }
           let reference = existing ?? (prefix + UUID().uuidString)
           latestReferences[id] = reference
@@ -1490,12 +1643,35 @@ enum CraftoonInkStore {
           panels[index]["drawingData"] = reference
           drawings.append((reference, drawing))
         } else if let reference = latestReferences[id] {
+          if panels[index]["drawingData"] as? String != reference {
+            panels[index].removeValue(forKey: "drawingHasStrokes")
+          }
           panels[index]["drawingData"] = reference
         }
       }
       pages[pageIndex]["panels"] = panels
     }
     return CraftoonInkCapture(pages: pages, drawings: drawings)
+  }
+
+  // Run on the archive queue after persistence. Inactive panels may have only
+  // an immutable file reference; a file can contain a completely empty drawing.
+  static func resolvingStrokePresence(_ source: [[String: Any]]) -> [[String: Any]] {
+    var pages = source
+    for pageIndex in pages.indices {
+      var panels = pages[pageIndex]["panels"] as? [[String: Any]] ?? []
+      for index in panels.indices where panels[index]["drawingHasStrokes"] as? Bool == nil {
+        let value = panels[index]["drawingData"] as? String ?? ""
+        panels[index]["drawingHasStrokes"] = autoreleasepool {
+          if value.isEmpty { return false }
+          // Unknown/corrupt ink remains protected by the save confirmation.
+          guard let drawing = drawing(value) else { return true }
+          return !drawing.strokes.isEmpty
+        }
+      }
+      pages[pageIndex]["panels"] = panels
+    }
+    return pages
   }
 
   static func persist(_ captures: [(String, PKDrawing)], archive: (PKDrawing) throws -> Data = { $0.dataRepresentation() }) throws {
@@ -1562,7 +1738,7 @@ enum CraftoonInkStore {
         }
       }
     }
-    RNPencilKitView.restoreVisibleDrawings()
+    RNPencilKitView.restoreVisibleDrawings(pages)
   }
 
   // Remove abandoned immutable revisions from previous sessions. Current session

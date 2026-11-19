@@ -6,7 +6,7 @@ import { CanvasOrientationPicker, CanvasPickerAnchor, measureCanvasPickerAnchor 
 jest.mock('react-native-svg', () => {
   const React = require('react');
   const element = (props: any) => React.createElement('svg', props, props.children);
-  return { __esModule: true, default: element, Defs: element, LinearGradient: element, Path: element, Rect: element, Stop: element };
+  return { __esModule: true, default: element, Defs: element, G: element, LinearGradient: element, Path: element, Rect: element, Stop: element };
 });
 let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
 let viewport = { width: 768, height: 1024, scale: 1, fontScale: 1 };
@@ -98,4 +98,20 @@ test('landscape places choices to the left with aligned centers and no arrow', a
   const popup = renderer!.root.findByProps({ testID: 'canvas-orientation-card' });
   await act(async () => popup.props.onLayout({ nativeEvent: { layout: { height: 90 } } }));
   expect(card().top + 45).toBe(anchor.y + anchor.height / 2);
+});
+
+
+test('canvas New menu stays below its toolbar button in landscape and after relayout', async () => {
+  viewport = { ...viewport, width: 1024, height: 768 };
+  let position = { x: 100, y: 24, width: 44, height: 44 };
+  const anchor = { ...position, measure: (done: (rect: CanvasPickerAnchor) => void) => done(position) };
+  await act(async () => { renderer = ReactTestRenderer.create(<CanvasOrientationPicker {...props} visible placement="below" anchor={anchor} />); });
+  await flushFrames();
+  expect(card()).toMatchObject({ left: 38, top: 76, opacity: 1 });
+  expect(card().top).toBeGreaterThan(position.y + position.height);
+  position = { ...position, x: 120, y: 44 };
+  const overlay = renderer!.root.findAllByType(RN.View).find(view => view.props.accessibilityViewIsModal)!;
+  await act(async () => overlay.props.onLayout());
+  await flushFrames();
+  expect(card()).toMatchObject({ left: 58, top: 96, opacity: 1 });
 });

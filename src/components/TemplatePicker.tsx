@@ -87,8 +87,8 @@ export function TemplatePicker({ onSelect }: TemplatePickerProps) {
         setSelection(next);
         setExpanded(true);
       }}>
-      <View pointerEvents="none" style={[styles.icon, expanded && styles.iconActive]}>
-        <Grid2x2 size={16} color="#FFFFFF" />
+      <View pointerEvents="none" style={styles.icon}>
+        <Grid2x2 size={22} color={expanded ? '#0D9488' : '#1ABC9C'} />
       </View>
       {expanded && (
         // Keep this in the same native view hierarchy: a Modal would move input
@@ -109,10 +109,9 @@ export function TemplatePicker({ onSelect }: TemplatePickerProps) {
 }
 
 const styles = StyleSheet.create({
-  control: { width: 28, height: 28, marginRight: 8, zIndex: 1000, overflow: 'visible' },
-  icon: { width: 28, height: 28, borderRadius: 8, backgroundColor: '#1ABC9C',
+  control: { width: 44, height: 44, zIndex: 1000, overflow: 'visible' },
+  icon: { width: 44, height: 44,
     alignItems: 'center', justifyContent: 'center' },
-  iconActive: { backgroundColor: '#0D9488' },
   popup: { position: 'absolute', top: POPUP_TOP, left: 0, padding: POPUP_PADDING,
     width: GRID_CELL_SIZE * GRID_LIMIT + POPUP_PADDING * 2,
     borderRadius: 14, backgroundColor: '#FFFFFF', shadowColor: '#0F172A',

@@ -1,6 +1,6 @@
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
-import Svg, { Defs, LinearGradient, Path, Rect, Stop } from 'react-native-svg';
+import Svg, { Defs, G, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { CanvasOrientation } from '../utils/canvasFormat';
 
 export interface CanvasPickerAnchor {
@@ -23,24 +23,30 @@ function FormatPicture({ orientation }: { orientation: CanvasOrientation }) {
   const height = orientation === 'portrait' ? 48 : 34;
   const x = (72 - width) / 2 - 2;
   const y = (72 - height) / 2 - 2;
-  const right = x + width;
-  const bottom = y + height;
   return <Svg width={52} height={52} viewBox="0 0 72 72">
-    <Defs><LinearGradient id={`paper-${orientation}`} x1="0" y1="0" x2="0.8" y2="1">
-      <Stop offset="0" stopColor="#FFFFFF" /><Stop offset="1" stopColor="#E7EDF5" />
-    </LinearGradient></Defs>
-    <Rect x={x + 4} y={y + 5} width={width} height={height} rx={3} fill="#64748B" opacity={0.12} />
-    <Rect x={x + 2} y={y + 2} width={width} height={height} rx={3} fill="#CBD5E1" />
-    <Path d={`M${x + 3} ${y}H${right - 9}L${right} ${y + 9}V${bottom - 3}Q${right} ${bottom} ${right - 3} ${bottom}H${x + 3}Q${x} ${bottom} ${x} ${bottom - 3}V${y + 3}Q${x} ${y} ${x + 3} ${y}Z`}
-      fill={`url(#paper-${orientation})`} stroke="#94A3B8" strokeWidth={1.3} />
-    <Path d={`M${right - 9} ${y}V${y + 7}Q${right - 9} ${y + 9} ${right - 7} ${y + 9}H${right}`}
-      fill="#D5DFEC" stroke="#94A3B8" strokeWidth={1} />
-    <Path d={`M${x + 3} ${bottom - 4}V${y + 4}H${right - 13}`} fill="none" stroke="#FFFFFF" strokeWidth={1.5} />
+    <Defs>
+      <LinearGradient id={`paper-${orientation}`} x1="0" y1="0" x2="0.7" y2="1">
+        <Stop offset="0" stopColor="#FFFFFF" />
+        <Stop offset="0.45" stopColor="#EAF5FC" />
+        <Stop offset="1" stopColor="#C8E2F3" />
+      </LinearGradient>
+      <LinearGradient id={`back-paper-${orientation}`} x1="0" y1="0" x2="1" y2="1">
+        <Stop offset="0" stopColor="#E5F2FB" /><Stop offset="1" stopColor="#BBD9ED" />
+      </LinearGradient>
+    </Defs>
+    <G>
+      <Rect x={x + 4} y={y + 5} width={width} height={height} rx={4}
+        fill={`url(#back-paper-${orientation})`} stroke="#92B3CB" strokeWidth={2.3} />
+      <Rect x={x} y={y} width={width} height={height} rx={4}
+        fill={`url(#paper-${orientation})`} stroke="#91ABC0" strokeWidth={2.6} />
+      <Rect x={x + 2.3} y={y + 2.3} width={width - 4.6} height={height - 4.6} rx={2}
+        fill="none" stroke="#FFFFFF" strokeOpacity={0.8} strokeWidth={0.9} />
+    </G>
   </Svg>;
 }
 
-export function CanvasOrientationPicker({ visible, anchor, onSelect, onCancel }: {
-  visible: boolean; anchor?: CanvasPickerAnchor;
+export function CanvasOrientationPicker({ visible, anchor, placement = 'adaptive', onSelect, onCancel }: {
+  visible: boolean; anchor?: CanvasPickerAnchor; placement?: 'adaptive' | 'below';
   onSelect: (orientation: CanvasOrientation) => void; onCancel: () => void;
 }) {
   const { width, height } = useWindowDimensions();
@@ -75,7 +81,7 @@ export function CanvasOrientationPicker({ visible, anchor, onSelect, onCancel }:
   const resolved = measured && measured.source === anchor ? measured.rect : anchor;
   if (!visible) { return null; }
   const center = resolved ? resolved.x + resolved.width / 2 : 80;
-  const landscape = width > height;
+  const landscape = width > height && placement !== 'below';
   const desiredLeft = landscape && resolved ? resolved.x - 168 - 8 : center - 84;
   const desiredTop = landscape && resolved
     ? resolved.y + (resolved.height - cardHeight) / 2
@@ -102,8 +108,7 @@ export function CanvasOrientationPicker({ visible, anchor, onSelect, onCancel }:
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000 },
   card: { position: 'absolute', width: 168, backgroundColor: '#FFFFFF', borderRadius: 14,
-    padding: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: '#E2E8F0',
-    shadowColor: '#334155', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.16, shadowRadius: 10, elevation: 6 },
+    padding: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: '#E2E8F0' },
   choices: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
   choice: { borderRadius: 10, flex: 1, alignItems: 'center', paddingVertical: 4 },
 });

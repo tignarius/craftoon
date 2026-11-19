@@ -4,7 +4,7 @@ import { ActivityIndicator, AppState, Modal, Pressable, SafeAreaView, ScrollView
 import { Check, Glasses, LibraryBig, Sparkles, SquarePen, X } from 'lucide-react-native';
 import { AppText as Text } from '../components/AppText';
 import { proAccess, ProStatus } from '../services/proAccess';
-import { AppMode, ProFeature } from './accessPolicy';
+import { AppMode, ProFeature, upgradeReasons } from './accessPolicy';
 
 export const modeDetails = {
   canvas: { title: 'Canvas mode', color: '#EA8A23', tint: '#FFF5E8', icon: SquarePen },
@@ -90,7 +90,7 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
   };
   const requirePro = (feature: ProFeature, mode: AppMode) => {
     if (status.isPro) { return true; }
-    setMessage(''); setPanel({ mode, feature });
+    setMessage(upgradeReasons[feature]); setPanel({ mode, feature });
     return false;
   };
   return <ProContext.Provider value={{ status, checking, infoOpen: panel !== null, requirePro, openInfo }}>
@@ -171,7 +171,7 @@ function InfoPanel({ panel, status, busy, checking, message, onClose, onRetry, o
           </TouchableOpacity>
           {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
           <View style={styles.about}>
-            <Text style={styles.detailLabel}>About Craftoon</Text>
+            <Text style={styles.detailLabel}>Created by</Text>
             {!!status.developerName && <Text style={styles.detailValue}>{status.developerName}</Text>}
           </View>
         </ScrollView>

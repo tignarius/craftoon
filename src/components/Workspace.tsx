@@ -1,33 +1,27 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   StyleSheet,
   PanResponder,
   LayoutChangeEvent,
 } from 'react-native';
-import { fitCanvas } from '../utils/canvasFormat';
+import Svg, { Polygon } from 'react-native-svg';
+import { CANVAS_VIEW_INSET, expandCanvasToViewport, fitCanvas } from '../utils/canvasFormat';
 import { AppText as Text } from './AppText';
 import { Panel } from './Panel';
 import { SpeechBubble } from './SpeechBubble';
+import { createPanelInFreeSpace } from '../utils/panelCreation';
+import { panelsCollide, panelFocusTransform, worldCorners } from '../utils/panelGeometry';
 import { ComicPanel, ComicBubble, PanelMode, ToolType, TracingImage } from '../types/comic';
 
-const PANEL_GAP = 16;
-const SNAP_THRESHOLD = 18;
-const WORKSPACE_PADDING = 12; // 원고지 안쪽 최소 여백 (좌우/상하 균등한 중간값)
+import { PANEL_CLOSE_GAP, PANEL_SNAP_GAPS, SNAP_THRESHOLD } from '../utils/panelMetrics';
 
-// 두 사각형 간의 충돌 검사
-const checkCollision = (
-  r1: { x: number; y: number; width: number; height: number },
-  r2: { x: number; y: number; width: number; height: number },
-  gap = PANEL_GAP
-) => {
-  return (
-    r1.x + r1.width > r2.x - gap &&
-    r1.x < r2.x + r2.width + gap &&
-    r1.y + r1.height > r2.y - gap &&
-    r1.y < r2.y + r2.height + gap
-  );
-};
+function snapCoordinate(value: number, targets: number[]) {
+  return targets.filter(target => Math.abs(target - value) < SNAP_THRESHOLD)
+    .sort((a, b) => Math.abs(a - value) - Math.abs(b - value))[0] ?? value;
+}
+
+const WORKSPACE_PADDING = 12; // 원고지 안쪽 최소 여백 (좌우/상하 균등한 중간값)
 
 interface WorkspaceProps {
   onImportTracingImage?: (panelId: string) => void;
@@ -41,8 +35,10 @@ interface WorkspaceProps {
   panelModes: Record<string, PanelMode>;
   bubbles: ComicBubble[];
   currentTool: ToolType;
-  onAddPanel: (rect: { x: number; y: number; width: number; height: number }) => void;
+  onAddPanel: (rect: Pick<ComicPanel, 'x' | 'y' | 'width' | 'height' | 'corners'>) => void;
   onUpdatePanel: (id: string, updates: Partial<ComicPanel>) => void;
+  onCommitPanelGeometry?: (id: string, updates: Partial<ComicPanel>) => void;
+  onGeometryInkChange?: (id: string, drawingData: string, geometry: import('../types/comic').PanelInkGeometry) => void;
   onDeletePanel: (id: string) => void;
   onModeChange: (id: string, mode: PanelMode) => void;
   onPanelSelect: (id: string) => void;
@@ -59,13 +55,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   editingTracingPanelId,
   onTracingEditingChange,
   onTracingImageChange,
-  canvasSize,
+  canvasSize: documentCanvasSize,
   panels,
   panelModes,
   bubbles,
   currentTool,
   onAddPanel,
   onUpdatePanel,
+  onCommitPanelGeometry = onUpdatePanel,
+  onGeometryInkChange,
   onDeletePanel,
   onModeChange,
   onPanelSelect,
@@ -76,22 +74,24 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   onDeleteBubble,
   onSheetBoundsChange,
 }) => {
+  const [selectionTiming, setSelectionTiming] = useState<{ id: string; time: number } | null>(null);
+  const markSelection = (id: string) => setSelectionTiming({ id, time: Date.now() });
   const [selectedBubbleId, setSelectedBubbleId] = useState<string | null>(null);
-  const sheetBounds = canvasSize;
   const [viewport, setViewport] = useState({ width: 1, height: 1 });
+  const canvasSize = useMemo(() => expandCanvasToViewport(documentCanvasSize, viewport), [documentCanvasSize, viewport]);
+  const sheetBounds = canvasSize;
+  const [focusedPanelId, setFocusedPanelId] = useState<string | null>(null);
+  const focusedPanel = panels.find(p => p.id === focusedPanelId && panelModes[p.id] === 'draw');
+  const focus = focusedPanel ? panelFocusTransform(focusedPanel, viewport, canvasSize) : null;
   const scale = fitCanvas(canvasSize, viewport);
+  useEffect(() => { if (!focusedPanel) { setFocusedPanelId(null); } }, [focusedPanel]);
   // Changing sibling order can detach/reinsert a live PencilKit view in Fabric.
   // Keep native siblings stable; only their explicit stacking values change.
   const panelStackOrder = new Map(panels.map((panel, index) => [panel.id, index]));
   const renderPanels = [...panels].sort((a, b) => a.id.localeCompare(b.id));
   useEffect(() => { onSheetBoundsChange(sheetBounds); }, [sheetBounds, onSheetBoundsChange]);
 
-  const [creatingRect, setCreatingRect] = useState<{
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  } | null>(null);
+  const [creatingRect, setCreatingRect] = useState<Pick<ComicPanel, 'x' | 'y' | 'width' | 'height' | 'corners'> | null>(null);
 
   // 스냅 가이드라인
   const [guides, setGuides] = useState<{
@@ -99,14 +99,17 @@ export const Workspace: React.FC<WorkspaceProps> = ({
     pos: number;
   }[]>([]);
 
+  const creationMovedRef = useRef(false);
   const startPointRef = useRef<{ x: number; y: number } | null>(null);
-  const creatingRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
+  const creatingRef = useRef<Pick<ComicPanel, 'x' | 'y' | 'width' | 'height' | 'corners'> | null>(null);
   const sheetBoundsRef = useRef(sheetBounds);
   sheetBoundsRef.current = sheetBounds;
 
   const panelsRef = useRef(panels);
   panelsRef.current = panels;
 
+  const focusRef = useRef(false);
+  focusRef.current = !!focus;
   const currentToolRef = useRef(currentTool);
   currentToolRef.current = currentTool;
 
@@ -128,29 +131,23 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   // 패널 안쪽 터치에는 전혀 관여하지 않으므로, 펜슬 드로잉 시 모드가 절대 풀리지 않음!
   const backgroundPR = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
+      onPanResponderTerminationRequest: () => false,
+      onStartShouldSetPanResponder: () => !focusRef.current,
       onMoveShouldSetPanResponder: (_, g) => {
-        return Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6;
+        return !focusRef.current && (Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6);
       },
 
       onPanResponderGrant: (evt) => {
+        creationMovedRef.current = false;
+        setCreatingRect(null);
         const { locationX, locationY } = evt.nativeEvent;
         let startX = locationX;
         let startY = locationY;
 
         // 드래그 시작점 자석 스냅
         for (const p of panelsRef.current) {
-          if (Math.abs(startX - p.x) < SNAP_THRESHOLD) startX = p.x;
-          else if (Math.abs(startX - (p.x + p.width + PANEL_GAP)) < SNAP_THRESHOLD)
-            startX = p.x + p.width + PANEL_GAP;
-          else if (Math.abs(startX - (p.x - PANEL_GAP)) < SNAP_THRESHOLD)
-            startX = p.x - PANEL_GAP;
-
-          if (Math.abs(startY - p.y) < SNAP_THRESHOLD) startY = p.y;
-          else if (Math.abs(startY - (p.y + p.height + PANEL_GAP)) < SNAP_THRESHOLD)
-            startY = p.y + p.height + PANEL_GAP;
-          else if (Math.abs(startY - (p.y - PANEL_GAP)) < SNAP_THRESHOLD)
-            startY = p.y - PANEL_GAP;
+          startX = snapCoordinate(startX, [p.x, ...PANEL_SNAP_GAPS.flatMap(gap => [p.x + p.width + gap, p.x - gap])]);
+          startY = snapCoordinate(startY, [p.y, ...PANEL_SNAP_GAPS.flatMap(gap => [p.y + p.height + gap, p.y - gap])]);
         }
 
         // 캔버스 여백 안으로 시작점 클램핑
@@ -170,6 +167,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         const startX = startPointRef.current.x;
         const startY = startPointRef.current.y;
 
+        if (Math.abs(locationX - startX) > 6 || Math.abs(locationY - startY) > 6) { creationMovedRef.current = true; }
         let endX = locationX;
         let endY = locationY;
         const activeGuides: { type: 'vertical' | 'horizontal'; pos: number }[] = [];
@@ -181,79 +179,26 @@ export const Workspace: React.FC<WorkspaceProps> = ({
           const pTop = p.y;
           const pBottom = p.y + p.height;
 
-          if (Math.abs(endX - (pLeft - PANEL_GAP)) < SNAP_THRESHOLD) {
-            endX = pLeft - PANEL_GAP;
-            activeGuides.push({ type: 'vertical', pos: endX });
-          } else if (Math.abs(endX - pRight) < SNAP_THRESHOLD) {
-            endX = pRight;
-            activeGuides.push({ type: 'vertical', pos: endX });
-          } else if (Math.abs(endX - pLeft) < SNAP_THRESHOLD) {
-            endX = pLeft;
-            activeGuides.push({ type: 'vertical', pos: endX });
-          }
-
-          if (Math.abs(endY - (pTop - PANEL_GAP)) < SNAP_THRESHOLD) {
-            endY = pTop - PANEL_GAP;
-            activeGuides.push({ type: 'horizontal', pos: endY });
-          } else if (Math.abs(endY - pBottom) < SNAP_THRESHOLD) {
-            endY = pBottom;
-            activeGuides.push({ type: 'horizontal', pos: endY });
-          } else if (Math.abs(endY - pTop) < SNAP_THRESHOLD) {
-            endY = pTop;
-            activeGuides.push({ type: 'horizontal', pos: endY });
-          }
+          const nextX = snapCoordinate(endX, [...PANEL_SNAP_GAPS.map(gap => pLeft - gap), pRight, pLeft]);
+          const nextY = snapCoordinate(endY, [...PANEL_SNAP_GAPS.map(gap => pTop - gap), pBottom, pTop]);
+          if (nextX !== endX) { activeGuides.push({ type: 'vertical', pos: nextX }); }
+          if (nextY !== endY) { activeGuides.push({ type: 'horizontal', pos: nextY }); }
+          endX = nextX;
+          endY = nextY;
         }
 
         setGuides(activeGuides);
 
-        let rawX = Math.min(startX, endX);
-        let rawY = Math.min(startY, endY);
-        let rawW = Math.abs(endX - startX);
-        let rawH = Math.abs(endY - startY);
-
-        // 캔버스 바깥으로 나가지 않도록 강제 (Canvas Boundary Clamping)
-        const sheetW = sheetBoundsRef.current.width - WORKSPACE_PADDING;
-        const sheetH = sheetBoundsRef.current.height - WORKSPACE_PADDING;
-
-        rawX = Math.max(WORKSPACE_PADDING, rawX);
-        rawY = Math.max(WORKSPACE_PADDING, rawY);
-
-        let clampedW = Math.min(rawW, sheetW - rawX);
-        let clampedH = Math.min(rawH, sheetH - rawY);
-
-        // 기존 패널과의 충돌 방지 (남은 공간 계산)
-        const isDraggingRight = endX >= startX;
-        const isDraggingDown = endY >= startY;
-
-        for (const other of panelsRef.current) {
-          if (isDraggingRight && other.x > startX) {
-            const yOverlaps =
-              rawY + clampedH > other.y - PANEL_GAP && rawY < other.y + other.height + PANEL_GAP;
-            if (yOverlaps) {
-              const maxAllowedW = Math.max(0, other.x - PANEL_GAP - startX);
-              clampedW = Math.min(clampedW, maxAllowedW);
-            }
-          }
-
-          if (isDraggingDown && other.y > startY) {
-            const xOverlaps =
-              rawX + clampedW > other.x - PANEL_GAP && rawX < other.x + other.width + PANEL_GAP;
-            if (xOverlaps) {
-              const maxAllowedH = Math.max(0, other.y - PANEL_GAP - startY);
-              clampedH = Math.min(clampedH, maxAllowedH);
-            }
-          }
+        const candidate = createPanelInFreeSpace({ x: startX, y: startY }, { x: endX, y: endY },
+          panelsRef.current, sheetBoundsRef.current);
+        // Hold the last valid shape when the pointer enters occupied space.
+        // Keep it until the pointer returns to a valid free-side position.
+        if (candidate && candidate.width > 50 && candidate.height > 50) {
+          creatingRef.current = candidate;
+          setCreatingRect(candidate);
+        } else {
+          setGuides([]);
         }
-
-        const candidateRect = {
-          x: rawX,
-          y: rawY,
-          width: clampedW,
-          height: clampedH,
-        };
-
-        creatingRef.current = candidateRect;
-        setCreatingRect(candidateRect);
       },
 
       onPanResponderRelease: () => {
@@ -261,11 +206,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({
 
         if (rect && rect.width > 50 && rect.height > 50) {
           // 기존 어떤 패널과도 겹치지 않는지 확인 후 생성
-          const collides = panelsRef.current.some((p) => checkCollision(rect, p, PANEL_GAP / 2));
+          const fitted = rect;
+          const collides = panelsRef.current.some((p) => panelsCollide(fitted, p, PANEL_CLOSE_GAP));
           if (!collides) {
-            onAddPanelRef.current(rect);
+            onAddPanelRef.current(fitted);
           }
-        } else {
+        } else if (!creationMovedRef.current) {
           // 사각형 바깥(순수 배경)을 단순 클릭한 경우: 레이아웃 모드로 복귀
           if (startPointRef.current && currentToolRef.current === 'bubble') {
             onAddBubbleRef.current(startPointRef.current);
@@ -284,14 +230,15 @@ export const Workspace: React.FC<WorkspaceProps> = ({
 
   return (
     <View style={styles.workspaceContainer} onLayout={handleViewportLayout}>
-      <View style={{ width: canvasSize.width * scale, height: canvasSize.height * scale }}>
-      <View style={[styles.sheet, { width: canvasSize.width, height: canvasSize.height,
+      <View testID="workspace-zoom-frame" style={{ width: canvasSize.width * scale, height: canvasSize.height * scale }}>
+      <View style={[styles.sheet, focusedPanel && styles.focusedSheet, { width: canvasSize.width, height: canvasSize.height,
         left: (canvasSize.width * scale - canvasSize.width) / 2,
         top: (canvasSize.height * scale - canvasSize.height) / 2, transform: [{ scale }] }]}>
 
         {/* LAYER 1: 패널들 뒤에 깔리는 순수 배경 캔버스 (빈 공간 터치 및 드래그 전용) */}
         <View
           style={StyleSheet.absoluteFill}
+          pointerEvents={focusedPanel ? 'none' : 'auto'}
           {...backgroundPR.panHandlers}
         />
 
@@ -307,37 +254,53 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         {renderPanels.map((panel) => (
           <Panel
             key={panel.id}
-            stackOrder={panelStackOrder.get(panel.id)}
+            stackOrder={focusedPanel?.id === panel.id ? panels.length : panelStackOrder.get(panel.id)}
             panel={panel}
+            selectionTimestamp={selectionTiming?.id === panel.id ? selectionTiming.time : 0}
+            interactive={!focusedPanel || focusedPanel.id === panel.id}
+            hidden={!!focusedPanel && focusedPanel.id !== panel.id}
+            displayPosition={focusedPanel?.id === panel.id && focus ? {
+              x: canvasSize.width / 2 - panel.width / 2 + (panel.x + panel.width / 2 - focus.centerX) * focus.scale / scale,
+              y: canvasSize.height / 2 - panel.height / 2 + (panel.y + panel.height / 2 - focus.centerY) * focus.scale / scale,
+            } : undefined}
+            displayScale={focusedPanel?.id === panel.id && focus ? focus.scale / scale : 1}
+            focused={focusedPanel?.id === panel.id}
+            onToggleFocus={() => setFocusedPanelId(focusedPanelId === panel.id ? null : panel.id)}
+            onShapeChange={(id, update) => onCommitPanelGeometry(id, update)}
+            onBorderStyleChange={(id, borderStyle) => onUpdatePanel(id, { borderStyle })}
             mode={panelModes[panel.id]}
             otherPanels={panels.filter((p) => p.id !== panel.id)}
             sheetBounds={sheetBounds}
-            canvasScale={scale}
+            canvasScale={focusedPanel?.id === panel.id && focus ? focus.scale : scale}
             onImportTracingImage={onImportTracingImage}
             importingTracingImage={importingTracingImage}
             tracingEditing={editingTracingPanelId === panel.id}
             onTracingEditingChange={onTracingEditingChange}
             onTracingImageChange={onTracingImageChange}
             onGuidesChange={setGuides}
-            onSelect={onPanelSelect}
+            onSelect={id => { markSelection(id); onPanelSelect(id); }}
             onModeChange={(id) => {
               const current = panelModes[id] || 'layout';
               let next: PanelMode = 'layout';
               if (current === 'layout') next = 'draw';
               else next = 'layout';
+              if (next === 'draw') { markSelection(id); }
               onModeChange(id, next);
             }}
-            onMove={(id, pos) => onUpdatePanel(id, pos)}
-            onResize={(id, size) => onUpdatePanel(id, size)}
-            onDrawingUpdate={(id, drawingData) => onUpdatePanel(id, { drawingData })}
+            onMove={(id, pos) => onCommitPanelGeometry(id, pos)}
+            onResize={(id, size) => onCommitPanelGeometry(id, size)}
+            onDrawingUpdate={(id, drawingData, geometry) => {
+              if (geometry && onGeometryInkChange) { onGeometryInkChange(id, drawingData, geometry); }
+              else { onUpdatePanel(id, { drawingData }); }
+            }}
             onDelete={onDeletePanel}
-            onDoubleTap={onPanelDoubleTap}
+            onDoubleTap={id => { markSelection(id); onPanelDoubleTap(id); }}
           />
         ))}
         </View>
 
         {/* LAYER 3: 자석 스냅 가이드라인 (최상위) */}
-        {guides.map((g, idx) =>
+        {(!focusedPanel ? guides : []).map((g, idx) =>
           g.type === 'vertical' ? (
             <View
               key={`g-v-${idx}`}
@@ -354,22 +317,16 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         )}
 
         {/* LAYER 4: 드래그 프리뷰 (실선 사각형) */}
-        {creatingRect && creatingRect.width > 5 && creatingRect.height > 5 && (
-          <View
-            style={[
-              styles.createPreview,
-              {
-                left: creatingRect.x,
-                top: creatingRect.y,
-                width: creatingRect.width,
-                height: creatingRect.height,
-              },
-            ]}
-            pointerEvents="none"
-          />
+        {!focusedPanel && creatingRect && creatingRect.width > 5 && creatingRect.height > 5 && (
+          <Svg pointerEvents="none" testID="panel-creation-preview" style={StyleSheet.absoluteFill}
+            width={canvasSize.width} height={canvasSize.height} viewBox={`0 0 ${canvasSize.width} ${canvasSize.height}`}>
+            <Polygon points={worldCorners(creatingRect).map(p => `${p.x},${p.y}`).join(' ')}
+              fill="rgba(14, 165, 233, 0.12)" stroke="#0284C7" strokeWidth={2} />
+          </Svg>
         )}
 
         {/* LAYER 5: 말풍선 */}
+        <View accessibilityElementsHidden={!!focusedPanel} importantForAccessibility={focusedPanel ? 'no-hide-descendants' : 'auto'} pointerEvents={focusedPanel ? 'none' : 'box-none'} style={[StyleSheet.absoluteFill, { zIndex: 20, opacity: focusedPanel ? 0 : 1 }]}>
         {bubbles.map((bubble) => (
           <SpeechBubble
             key={bubble.id}
@@ -381,6 +338,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             onDelete={onDeleteBubble}
           />
         ))}
+        </View>
       </View>
       </View>
     </View>
@@ -393,11 +351,13 @@ const styles = StyleSheet.create({
   workspaceContainer: {
     flex: 1,
     backgroundColor: '#F1F5F9',
-    paddingVertical: 12,
-    paddingHorizontal: 36,
+    overflow: 'hidden',
+    paddingVertical: CANVAS_VIEW_INSET.vertical,
+    paddingHorizontal: CANVAS_VIEW_INSET.horizontal,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  focusedSheet: { backgroundColor: 'transparent', shadowOpacity: 0, elevation: 0, overflow: 'visible' },
   sheet: {
     position: 'absolute',
     backgroundColor: '#FFFFFF',
@@ -422,6 +382,7 @@ const styles = StyleSheet.create({
     top: 0,
     bottom: 0,
     width: 1,
+    transform: [{ translateX: -0.5 }],
     backgroundColor: '#0EA5E9',
     borderWidth: 0.5,
     borderColor: '#0EA5E9',
@@ -432,6 +393,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     height: 1,
+    transform: [{ translateY: -0.5 }],
     backgroundColor: '#0EA5E9',
     borderWidth: 0.5,
     borderColor: '#0EA5E9',

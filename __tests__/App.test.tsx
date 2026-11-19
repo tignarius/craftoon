@@ -29,7 +29,7 @@ jest.mock('../src/components/ComicReader', () => ({ ComicReader: jest.fn(() => n
 jest.mock('../src/services/storyLibrary', () => ({ storyLibrary: {
   pickTracingImage: jest.fn(), retainInkReferences: jest.fn(),
   saveDraft: jest.fn(), loadDraft: jest.fn(),
-  capturePages: jest.fn(), restorePages: jest.fn(), loadStory: jest.fn(), saveStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(),
+  capturePages: jest.fn(), restorePages: jest.fn(), loadStory: jest.fn(), listStories: jest.fn(), saveStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(),
 } }));
 
 const pages = [0, 1].map(index => ({ id: `page-${index}`, panels: [], bubbles: [] }));
@@ -48,6 +48,7 @@ beforeEach(async () => {
   jest.spyOn(Alert, 'alert').mockImplementation(() => {});
   jest.spyOn(Alert, 'prompt').mockImplementation(() => {});
   (storyLibrary.loadDraft as jest.Mock).mockResolvedValue(null);
+  (storyLibrary.listStories as jest.Mock).mockResolvedValue([]);
   (storyLibrary.retainInkReferences as jest.Mock).mockResolvedValue(undefined);
   (storyLibrary.saveDraft as jest.Mock).mockResolvedValue(undefined);
   (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items);
@@ -550,6 +551,8 @@ test('the page menu inserts after the current page, deletes it, and undo restore
   await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
   await chooseFormat();
   await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  await act(async () => (Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?').at(-1)[2]
+    .find((item: any) => item.text === 'Delete').onPress());
   expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
   await act(async () => renderer.root.findByType(Header).props.onAddPage());
   await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
@@ -557,6 +560,8 @@ test('the page menu inserts after the current page, deletes it, and undo restore
     ...page, panels: page.panels.map((panel: any) => ({ ...panel, drawingData: 'captured-ink' })),
   })));
   await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  await act(async () => (Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?').at(-1)[2]
+    .find((item: any) => item.text === 'Delete').onPress());
   expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
   expect(renderer.root.findByType(Header).props.currentPageIndex).toBe(0);
   await act(async () => renderer.root.findByType(Header).props.onUndo());
@@ -576,6 +581,8 @@ test('failed page deletion keeps every page open', async () => {
   await act(async () => renderer.root.findByType(Header).props.onNextPage());
   (storyLibrary.capturePages as jest.Mock).mockRejectedValueOnce(new Error('capture failed'));
   await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  await act(async () => (Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?').at(-1)[2]
+    .find((item: any) => item.text === 'Delete').onPress());
   expect(renderer.root.findByType(Header).props.totalPages).toBe(2);
   expect(renderer.root.findByType(Header).props.currentPageIndex).toBe(1);
 });
@@ -589,6 +596,8 @@ test('deleting the only page keeps a blank page of the same format and undo rest
     ...page, panels: page.panels.map((panel: any) => ({ ...panel, drawingData: 'last-page-ink' })),
   })));
   await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  await act(async () => (Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?').at(-1)[2]
+    .find((item: any) => item.text === 'Delete').onPress());
   expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
   expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(0);
   expect(renderer.root.findByType(Workspace).props.canvasSize).toEqual({ width: 1200, height: 900 });
@@ -601,6 +610,8 @@ test('deleting the first of multiple pages retains the following pages in order'
   (storyLibrary.loadStory as jest.Mock).mockResolvedValueOnce({ id: 'three', title: 'Three', pages: document });
   await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('three', 'editor'));
   await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  await act(async () => (Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?').at(-1)[2]
+    .find((item: any) => item.text === 'Delete').onPress());
   expect(renderer.root.findByType(Header).props.currentPageIndex).toBe(0);
   await act(async () => renderer.root.findByType(Header).props.onRead());
   expect(renderer.root.findByType(ComicReader).props.pages.map((page: any) => page.id)).toEqual(['p1', 'p2']);
@@ -777,7 +788,7 @@ test('restoring waits for the draft before requesting its orientation', async ()
   await act(async () => { renderer = ReactTestRenderer.create(<App />); });
   expect(lockCanvasOrientation).not.toHaveBeenCalled();
   await act(async () => finish({ id: 'restored-wide', title: 'Draft', isSaved: false, pageIndex: 0,
-    pages: [{ id: 'wide', orientation: 'landscape', canvasSize: { width: 1200, height: 900 }, panels: [], bubbles: [] }],
+    pages: [{ id: 'wide', orientation: 'landscape', canvasSize: { width: 1200, height: 900 }, panels: [{ id: 'layout', x: 12, y: 12, width: 100, height: 100 }], bubbles: [] }],
     updatedAt: new Date().toISOString(),
   }));
   expect(lockCanvasOrientation).toHaveBeenLastCalledWith('landscape');
@@ -793,7 +804,7 @@ test('backgrounding skips rotation requests and returning active reapplies the r
   });
   (storyLibrary.loadDraft as jest.Mock).mockResolvedValueOnce({ id: 'wide-draft', title: 'Draft',
     isSaved: false, pageIndex: 0, pages: [{ id: 'wide', orientation: 'landscape',
-      canvasSize: { width: 1200, height: 900 }, panels: [], bubbles: [] }], updatedAt: new Date().toISOString() });
+      canvasSize: { width: 1200, height: 900 }, panels: [{ id: 'layout', x: 12, y: 12, width: 100, height: 100 }], bubbles: [] }], updatedAt: new Date().toISOString() });
   await act(async () => { renderer = ReactTestRenderer.create(<App />); });
   (lockCanvasOrientation as jest.Mock).mockClear();
   await act(async () => stateListeners.forEach(listener => listener('background')));
@@ -827,8 +838,9 @@ test('Free stops at four pages through page buttons and layout templates while k
   expect(calls[calls.length - 1][0].pages).toHaveLength(4);
 });
 
-test('Free gates Library save and reader export without discarding the drawing', async () => {
+test('Free gates a second Library file and reader export without discarding the drawing', async () => {
   await startFreeCanvas();
+  (storyLibrary.listStories as jest.Mock).mockResolvedValue([{ id: 'existing-comic' }]);
   await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
   await act(async () => renderer.root.findByType(Header).props.onSaveStory());
   expect(storyLibrary.saveStory).not.toHaveBeenCalled();
@@ -839,6 +851,27 @@ test('Free gates Library save and reader export without discarding the drawing',
   await act(async () => renderer.root.findByType(Header).props.onPrint());
   expect(storyLibrary.emailStory).not.toHaveBeenCalled();
   expect(storyLibrary.printStory).not.toHaveBeenCalled();
+});
+
+test('Free can save its first comic, overwrite it and autosave later edits', async () => {
+  await startFreeCanvas();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
+  await act(async () => renderer.root.findByType(Header).props.onSaveStory());
+  expect(renderer.root.findByType(SaveComicDialog).props.visible).toBe(true);
+  await act(async () => renderer.root.findByType(SaveComicDialog).props.onChangeName('My free comic'));
+  await act(async () => renderer.root.findByType(SaveComicDialog).props.onSave());
+  const first = (storyLibrary.saveStory as jest.Mock).mock.calls[0][0];
+  expect(first.title).toBe('My free comic');
+  (storyLibrary.listStories as jest.Mock).mockResolvedValue([{ id: first.id }]);
+  await act(async () => renderer.root.findByType(Header).props.onSaveStory());
+  expect(storyLibrary.saveStory).toHaveBeenCalledTimes(2);
+  expect((storyLibrary.saveStory as jest.Mock).mock.calls[1][0].id).toBe(first.id);
+  jest.useFakeTimers();
+  const panel = renderer.root.findByType(Workspace).props.panels[0];
+  await act(async () => renderer.root.findByType(Workspace).props.onUpdatePanel(panel.id, { x: 30 }));
+  await act(async () => { jest.advanceTimersByTime(1200); });
+  expect(storyLibrary.saveStory).toHaveBeenCalledTimes(3);
+  expect((storyLibrary.saveStory as jest.Mock).mock.calls[2][0].pages[0].panels[0].x).toBe(30);
 });
 
 test('buying Pro immediately removes the page limit', async () => {
@@ -870,6 +903,9 @@ test('Free can reopen older comics over four pages without truncation or autosav
 test.each([
   ['moving', { x: 50 }],
   ['resizing', { width: 180 }],
+  ['reshaping', { corners: [{ x: 0.2, y: 0 }, { x: 1, y: 0 }, { x: 0.8, y: 1 }, { x: 0, y: 1 }] }],
+  ['restyling', { borderStyle: 'dashed' }],
+  ['repositioning the handle on', { adjustmentSide: 'left' }],
   ['drawing in', { drawingData: 'new-ink' }],
 ])('%s a panel brings it to the front and preserves its order through undo, save and reopen', async (_action, updates) => {
   const overlapping = ['oldest', 'middle', 'newest'].map(id => ({
@@ -894,10 +930,12 @@ test.each([
   const calls = (storyLibrary.saveStory as jest.Mock).mock.calls;
   const saved = calls[calls.length - 1][0];
   expect(saved.pages[0].panels.map((panel: { id: string }) => panel.id)).toEqual(['middle', 'newest', 'oldest']);
+  expect(saved.pages[0].panels[2]).toMatchObject(updates);
   await act(async () => renderer.root.findByType(Header).props.onLoadStory());
   (storyLibrary.loadStory as jest.Mock).mockResolvedValueOnce(saved);
   await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
   expect(order()).toEqual(['middle', 'newest', 'oldest']);
+  expect(renderer.root.findByType(Workspace).props.panels[2]).toMatchObject(updates);
 });
 
 test('selecting a covered panel or entering its drawing modes brings it forward immediately', async () => {
@@ -910,7 +948,7 @@ test('selecting a covered panel or entering its drawing modes brings it forward 
   const top = () => workspace().panels[workspace().panels.length - 1].id;
   await act(async () => workspace().onPanelSelect('back'));
   expect(top()).toBe('back');
-  expect(workspace().panelModes.back).toBe('layout');
+  expect(workspace().panelModes.back).toBe('draw');
   await act(async () => renderer.root.findByType(Header).props.onUndo());
   expect(top()).toBe('front');
   await act(async () => workspace().onPanelDoubleTap('back'));
@@ -979,6 +1017,41 @@ test('New after a completed save does not ask to save the same work again', asyn
   await act(async () => renderer.root.findByType(Header).props.onNewStory());
   expect(Alert.alert).not.toHaveBeenCalled();
   expect(renderer.root.findByType(CanvasOrientationPicker).props.visible).toBe(true);
+});
+
+test('one geometry commit and its delayed ink result form a single Undo and Redo step', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
+  const workspace = () => renderer.root.findByType(Workspace).props;
+  await act(async () => workspace().onAddPanel({ x: 30, y: 40, width: 200, height: 180 }));
+  const id = workspace().panels[0].id;
+  (storyLibrary.capturePages as jest.Mock).mockImplementationOnce(async items => items.map((page: { panels: object[] }) => ({
+    ...page, panels: page.panels.map(panel => ({ ...panel, drawingData: 'original-native-ink' })),
+  })));
+  await act(async () => workspace().onCommitPanelGeometry(id, { width: 300, height: 250, resizeInk: true }));
+  await act(async () => workspace().onGeometryInkChange(id, 'resized-native-ink', {
+    width: 296, height: 246, sourceDrawingData: 'original-native-ink',
+  }));
+  expect(workspace().panels[0].drawingData).toBe('resized-native-ink');
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(workspace().panels[0]).toMatchObject({ width: 200, height: 180, drawingData: 'original-native-ink' });
+  await act(async () => renderer.root.findByType(Header).props.onRedo());
+  expect(workspace().panels[0]).toMatchObject({ width: 300, height: 250, drawingData: 'resized-native-ink' });
+});
+
+test('a delayed geometry ink callback preserves a separate border edit and never adds a history step', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
+  const workspace = () => renderer.root.findByType(Workspace).props;
+  await act(async () => workspace().onAddPanel({ x: 30, y: 40, width: 200, height: 180 }));
+  const id = workspace().panels[0].id;
+  await act(async () => workspace().onUpdatePanel(id, { drawingData: 'original-ink' }));
+  await act(async () => workspace().onCommitPanelGeometry(id, { width: 300, height: 250 }));
+  await act(async () => workspace().onUpdatePanel(id, { borderStyle: 'dashed' }));
+  await act(async () => workspace().onGeometryInkChange(id, 'resized-ink', { width: 296, height: 246, sourceDrawingData: 'original-ink' }));
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(workspace().panels[0]).toMatchObject({ width: 300, height: 250, drawingData: 'resized-ink' });
+  expect(workspace().panels[0].borderStyle).not.toBe('dashed');
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(workspace().panels[0]).toMatchObject({ width: 200, height: 180, drawingData: 'original-ink' });
 });
 
 test('panel reference import, transforms and history preserve both panels and native ink', async () => {
@@ -1093,4 +1166,181 @@ test('native ink leases include current and Undo references without bridging leg
   const leases = (storyLibrary.retainInkReferences as jest.Mock).mock.calls.slice(-1)[0][0];
   expect(leases).toEqual(expect.arrayContaining(['craftoon-ink:before', 'craftoon-ink:after']));
   expect(leases).not.toContain('legacy-base64-payload');
+});
+
+test.each(['Cancel', "Don't Save", 'Save'])('template offers %s before adding its layout and preserves native ink', async choice => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
+  (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items.map((page: any) => ({ ...page,
+    panels: page.panels.map((panel: any) => ({ ...panel, drawingData: 'craftoon-ink:last-stroke' })),
+  })));
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+  expect(renderer.root.findByType(Workspace).props.panels[0].drawingData).toBe('craftoon-ink:last-stroke');
+  await act(async () => switchDialog()[2].find((item: any) => item.text === choice).onPress());
+  if (choice === 'Cancel') {
+    expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+    return;
+  }
+  if (choice === 'Save') {
+    expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+    await act(async () => renderer.root.findByType(SaveComicDialog).props.onChangeName('Before template'));
+    await act(async () => renderer.root.findByType(SaveComicDialog).props.onSave());
+    const saved = (storyLibrary.saveStory as jest.Mock).mock.calls[0][0];
+    expect(saved.title).toBe('Before template');
+    expect(saved.pages).toHaveLength(1);
+    expect(saved.pages[0].panels[0].drawingData).toBe('craftoon-ink:last-stroke');
+  } else { expect(storyLibrary.saveStory).not.toHaveBeenCalled(); }
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(2);
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(4);
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+  expect(renderer.root.findByType(Workspace).props.panels[0].drawingData).toBe('craftoon-ink:last-stroke');
+});
+
+test('template stays pending after a failed save and is abandoned when naming is canceled', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
+  const panelId = renderer.root.findByType(Workspace).props.panels[0].id;
+  await act(async () => renderer.root.findByType(Workspace).props.onUpdatePanel(panelId, { drawingData: 'craftoon-ink:drawn' }));
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  await act(async () => switchDialog()[2].find((item: any) => item.text === 'Save').onPress());
+  (storyLibrary.saveStory as jest.Mock).mockRejectedValueOnce(new Error('full'));
+  await act(async () => renderer.root.findByType(SaveComicDialog).props.onSave());
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+  expect(renderer.root.findByType(SaveComicDialog).props.error).toBeTruthy();
+  await act(async () => renderer.root.findByType(SaveComicDialog).props.onCancel());
+  await act(async () => renderer.root.findByType(Header).props.onSaveStory());
+  await act(async () => renderer.root.findByType(SaveComicDialog).props.onSave());
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(1);
+});
+
+test.each([false, true])('reapplying a blank template does not ask to save, including empty native archives (%s)', async emptyArchive => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  if (emptyArchive) {
+    (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items.map((page: any) => ({ ...page,
+      panels: page.panels.map((panel: any) => ({ ...panel, drawingData: 'craftoon-ink:empty', drawingHasStrokes: false })),
+    })));
+  }
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(3, 2));
+  expect(switchDialog()).toBeUndefined();
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(6);
+  expect(renderer.root.findByType(SaveComicDialog).props.visible).toBe(false);
+});
+
+test('a reference photo still requires a save choice before another template', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  const panelId = renderer.root.findByType(Workspace).props.panels[0].id;
+  await act(async () => renderer.root.findByType(Workspace).props.onUpdatePanel(panelId, {
+    tracingImage: { uri: 'file:///reference.jpg', width: 100, height: 100, x: 0, y: 0, rotation: 0, opacity: 0.35 },
+  }));
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(3, 2));
+  expect(switchDialog()).toBeDefined();
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(4);
+});
+
+test('hand-drawn empty layout asks to save before a template, even with an empty native archive', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
+  (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items.map((page: any) => ({ ...page,
+    panels: page.panels.map((panel: any) => ({ ...panel, drawingData: 'craftoon-ink:empty', drawingHasStrokes: false })),
+  })));
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  expect(switchDialog()).toBeDefined();
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(1);
+  await act(async () => switchDialog()[2].find((item: any) => item.text === 'Cancel').onPress());
+  expect(renderer.root.findByType(Workspace).props.panels[0].layoutSource).toBe('manual');
+});
+
+test.each(['panel-grid-legacy-0', 'panel-legacy'])('existing layout %s keeps its original creation source after recovery', async id => {
+  (storyLibrary.loadDraft as jest.Mock).mockResolvedValueOnce({ id: 'recovered', title: 'Draft', isSaved: false, pageIndex: 0,
+    pages: [{ id: 'legacy-page', panels: [{ id, x: 12, y: 12, width: 100, height: 100, drawingHasStrokes: false }], bubbles: [] }],
+  });
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(<App />); });
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  if (id.startsWith('panel-grid-')) {
+    expect(switchDialog()).toBeUndefined();
+    expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(4);
+  } else {
+    expect(switchDialog()).toBeDefined();
+    expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(1);
+  }
+});
+
+
+test('page deletion waits for confirmation and Cancel preserves the page and releases the action lock', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'editor'));
+  (storyLibrary.capturePages as jest.Mock).mockClear();
+  await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  const dialog = (Alert.alert as jest.Mock).mock.calls.find(call => call[0] === 'Delete page?');
+  expect(dialog[1]).toContain('page 1');
+  expect(storyLibrary.capturePages).not.toHaveBeenCalled();
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(2);
+  await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  expect((Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?')).toHaveLength(1);
+  await act(async () => dialog[2].find((item: any) => item.text === 'Cancel').onPress());
+  expect(storyLibrary.capturePages).not.toHaveBeenCalled();
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(2);
+  await act(async () => renderer.root.findByType(Header).props.onDeletePage());
+  const nextDialog = (Alert.alert as jest.Mock).mock.calls.filter(call => call[0] === 'Delete page?').at(-1);
+  const confirm = nextDialog[2].find((item: any) => item.text === 'Delete').onPress;
+  await act(async () => { await confirm(); await confirm(); });
+  expect(storyLibrary.capturePages).toHaveBeenCalledTimes(1);
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(1);
+});
+
+
+test('choosing a page direction repeatedly never asks to save a completely blank comic', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat('landscape');
+  await act(async () => renderer.root.findByType(Header).props.onNewStory());
+  expect(switchDialog()).toBeUndefined();
+  await chooseFormat('portrait');
+  await act(async () => renderer.root.findByType(Header).props.onAddPage());
+  await act(async () => renderer.root.findByType(Header).props.onAddPage());
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(3);
+  await act(async () => renderer.root.findByType(Header).props.onNewStory());
+  expect(switchDialog()).toBeUndefined();
+  expect(renderer.root.findByType(CanvasOrientationPicker).props.visible).toBe(true);
+});
+
+
+test.each([1, 3])('an unnamed recovery with %i blank pages starts at Splash after restart', async count => {
+  (storyLibrary.loadDraft as jest.Mock).mockResolvedValueOnce({ id: 'empty-session', title: 'Untitled comic', isSaved: false,
+    pageIndex: count - 1, pages: Array.from({ length: count }, (_, index) => ({ id: `empty-${index}`,
+      orientation: 'landscape', canvasSize: { width: 1362, height: 900 }, panels: [], bubbles: [] })),
+    updatedAt: new Date().toISOString(),
+  });
+  (storyLibrary.restorePages as jest.Mock).mockClear();
+  (storyLibrary.saveDraft as jest.Mock).mockClear();
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(<App />); });
+  expect(renderer.root.findByType(SplashScreen)).toBeDefined();
+  expect(renderer.root.findAllByType(Workspace)).toHaveLength(0);
+  expect(storyLibrary.restorePages).not.toHaveBeenCalled();
+  expect(storyLibrary.saveDraft).not.toHaveBeenCalled();
+  expect(lockCanvasOrientation).toHaveBeenLastCalledWith('automatic');
+  await act(async () => renderer.root.findByType(SplashScreen).props.onNewStory());
+  expect(renderer.root.findByType(CanvasOrientationPicker).props.visible).toBe(true);
+  expect(switchDialog()).toBeUndefined();
+});
+
+test('an unsaved blank template is still restored as a real layout', async () => {
+  const draft = { id: 'layout-session', title: 'Untitled comic', isSaved: false, pageIndex: 0,
+    pages: [{ id: 'layout-page', panels: [{ id: 'panel-grid-older-0', layoutSource: 'template',
+      x: 12, y: 12, width: 100, height: 100, drawingHasStrokes: false }], bubbles: [] }],
+  };
+  (storyLibrary.loadDraft as jest.Mock).mockResolvedValueOnce(draft);
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(<App />); });
+  expect(renderer.root.findAllByType(SplashScreen)).toHaveLength(0);
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(1);
+  expect(storyLibrary.restorePages).toHaveBeenCalledWith(draft.pages);
 });

@@ -1,3 +1,4 @@
+import { PANEL_ICON_SCALE } from './panelIconSizing';
 import React, { useEffect, useRef, useState } from 'react';
 import { GestureResponderEvent, PanResponder, StyleSheet, TouchableOpacity, View } from 'react-native';
 import { Blend, Check, Eye, EyeOff, Maximize2, Move, RotateCw, Settings2, Trash2 } from 'lucide-react-native';
@@ -175,13 +176,13 @@ export function TracingImageControls(props: Props) {
     <View testID="reference-fixed-toolbar" style={[styles.toolbar,{ maxWidth: Math.max(32,props.bounds.width-10) },!props.editing && styles.quiet]}>
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={visible ? 'Hide reference image' : 'Show reference image'}
         accessibilityHint="This panel only" onPress={() => props.onCommit({ ...props.image,visible: !visible })} style={styles.button}>
-        {visible ? <Eye size={15} color="#64748B" /> : <EyeOff size={15} color="#64748B" />}
+        {visible ? <Eye size={15 * PANEL_ICON_SCALE} color="#64748B" /> : <EyeOff size={15 * PANEL_ICON_SCALE} color="#64748B" />}
       </TouchableOpacity>
       {props.editing && <>
         <TouchableOpacity testID="reference-move-handle" accessibilityRole="button" accessibilityLabel="Move reference image"
           accessibilityState={{ selected: activeTool === 'move' }} accessibilityHint="Drag inside the panel to move the image"
           onPress={() => { setActiveTool('move'); setOpacityOpen(false); }} style={[styles.button,selected('move')]}>
-          <Move size={15} color={activeTool === 'move' ? '#7C3AED' : '#64748B'} />
+          <Move size={15 * PANEL_ICON_SCALE} color={activeTool === 'move' ? '#7C3AED' : '#64748B'} />
         </TouchableOpacity>
         <View testID="reference-rotate-handle" accessible accessibilityRole="adjustable" accessibilityLabel="Rotate reference image"
           accessibilityHint="Drag this control or drag inside the panel to rotate"
@@ -191,7 +192,7 @@ export function TracingImageControls(props: Props) {
           onAccessibilityTap={() => { setActiveTool('rotate'); setOpacityOpen(false); }}
           onAccessibilityAction={event => props.onCommit(rotateTracingImage(props.image,event.nativeEvent.actionName === 'increment' ? 15 : -15))}
           style={[styles.button,selected('rotate')]} {...rotate.panHandlers}>
-          <RotateCw size={15} color={activeTool === 'rotate' ? '#7C3AED' : '#64748B'} />
+          <RotateCw size={15 * PANEL_ICON_SCALE} color={activeTool === 'rotate' ? '#7C3AED' : '#64748B'} />
         </View>
         <View testID="reference-scale-handle" accessible accessibilityRole="adjustable" accessibilityLabel="Resize reference image"
           accessibilityHint="Drag this control or drag inside the panel to resize"
@@ -200,18 +201,18 @@ export function TracingImageControls(props: Props) {
           onAccessibilityTap={() => { setActiveTool('scale'); setOpacityOpen(false); }}
           onAccessibilityAction={event => props.onCommit(resizeTracingImage(props.image,event.nativeEvent.actionName === 'increment' ? 1.1 : 1/1.1))}
           style={[styles.button,selected('scale')]} {...scale.panHandlers}>
-          <Maximize2 size={15} color={activeTool === 'scale' ? '#7C3AED' : '#64748B'} />
+          <Maximize2 size={15 * PANEL_ICON_SCALE} color={activeTool === 'scale' ? '#7C3AED' : '#64748B'} />
         </View>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Adjust reference opacity" accessibilityState={{ expanded: opacityOpen }}
           onPress={() => setOpacityOpen(value => !value)} style={[styles.button,opacityOpen && styles.selected]}>
-          <Blend size={15} color={opacityOpen ? '#7C3AED' : '#64748B'} />
+          <Blend size={15 * PANEL_ICON_SCALE} color={opacityOpen ? '#7C3AED' : '#64748B'} />
         </TouchableOpacity>
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Delete reference image"
-          onPress={() => props.onCommit(undefined)} style={styles.button}><Trash2 size={15} color="#B56C76" /></TouchableOpacity>
+          onPress={() => props.onCommit(undefined)} style={styles.button}><Trash2 size={15 * PANEL_ICON_SCALE} color="#B56C76" /></TouchableOpacity>
       </>}
       <TouchableOpacity accessibilityRole="button" accessibilityLabel={props.editing ? 'Hide image controls' : 'Show image controls'}
         onPress={() => props.onEditingChange(!props.editing)} style={styles.button}>
-        {props.editing ? <Check size={15} color="#64748B" /> : <Settings2 size={15} color="#64748B" />}
+        {props.editing ? <Check size={15 * PANEL_ICON_SCALE} color="#64748B" /> : <Settings2 size={15 * PANEL_ICON_SCALE} color="#64748B" />}
       </TouchableOpacity>
     </View>
   </View>;

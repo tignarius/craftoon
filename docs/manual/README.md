@@ -1,12 +1,13 @@
-# Quick-guide screenshot sources
+# English quick guide
 
-The current guide uses only these real 2752 × 2064 landscape iPad simulator captures:
+`scripts/build-guide.py` generates one common English, one-page guide at `output/pdf/craftoon-quick-guide.pdf`, copies it to `ios/Craftoon/craftoon-quick-guide.pdf`, and renders `tmp/pdfs/craftoon-quick-guide.png` for visual review. Run it with a Python environment containing reportlab, Pillow, pypdf and PyMuPDF. PDF generation does not build or install the app.
 
-- `blank-panel.png`: Craftoon Canvas with one empty panel, created by dragging in the running app. The panel is selected so its mode button, delete button and resize handle are visible.
-- `blank-reader.png`: Read mode for the same comic with the same empty panel. Only the actual toolbar is used in the guide.
+The approved compact page is 595.28 x 659.89 pt. The app bundles only this common PDF and opens it in both orientations. PDFKit fits the whole page after safe-area layout and refits on rotation, preserving pinch zoom while the view bounds remain unchanged. The guide is available offline to Free and Pro users. Older orientation-specific PDFs are historical review artifacts and are not bundled or regenerated.
 
-There is no drawn artwork, sample comic or generated app screen in the current PDF. The Canvas capture is placed in full. Its icons are not moved, recreated or substituted. English callouts and outlined PRO badges are PDF elements outside the capture, with arrow endpoints measured against the original screenshot pixels.
+The three tinted regions distinguish Canvas (orange), Library (purple) and Read (green). Library occupies the space under Layout mode; Read aligns with the lower-right Canvas arm. Canvas shows Layout and Drawing controls, with Background Image Manipulator under Drawing. PencilKit guidance is omitted. Library shows its toolbar and a selected comic with Canvas, Read and Delete actions. Read groups Library/Canvas separately from Email/Print.
 
-`scripts/build-guide.py` creates a single A4 landscape PDF at `output/pdf/craftoon-quick-guide.pdf` and copies the same file to `ios/Craftoon/craftoon-quick-guide.pdf` for the in-app guide.
+All explanatory icons are vectors sourced from the app. Exactly one crop from the existing real `current-library.png` capture is embedded to show a selected comic and its actions. Other historical captures are reference material only. `node scripts/export-guide-icons.mjs` refreshes `app-icons.json` from the installed lucide-react-native package. The Lucide license is attached to the PDF.
 
-The older `canvas.png`, `layout.png`, `draw.png`, `select.png` and `reader.png` captures are not used by the current generator.
+The Canvas toolbar follows the app order: Canvas, Library, Read, New, Save, Templates, Undo, Redo, Pages. Templates uses the green grid outline. First mode-icon labels are omitted. Filled arrow tips stay clear of the icons. Add Image is captioned below its icon, matching Switch mode. Library action and Read swipe captions share a baseline.
+
+Free allows up to 4 pages per comic and 1 saved comic at a time. Pro allows unlimited pages and saved comics, plus email and print. FREE uses a teal outline badge; PRO uses purple, with centered lettering. Created by Squareplayer is horizontally centered below the benefits with extra breathing room.

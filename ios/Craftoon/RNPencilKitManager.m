@@ -5,9 +5,18 @@
 RCT_EXPORT_VIEW_PROPERTY(isDrawingActive, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(drawingTool, NSString)
 RCT_EXPORT_VIEW_PROPERTY(panelId, NSString)
+RCT_EXPORT_VIEW_PROPERTY(shapeFrame, NSDictionary)
+RCT_EXPORT_VIEW_PROPERTY(selectionTimestamp, double)
+RCT_EXPORT_VIEW_PROPERTY(renderScale, double)
+RCT_EXPORT_VIEW_PROPERTY(polygonPoints, NSArray)
 RCT_EXPORT_VIEW_PROPERTY(drawingData, NSString)
 RCT_EXPORT_VIEW_PROPERTY(transparentBackground, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(onDrawingChange, RCTBubblingEventBlock)
+@end
+
+@interface RCT_EXTERN_MODULE(CraftoonPanelClipManager, RCTViewManager)
+RCT_EXPORT_VIEW_PROPERTY(polygonPoints, NSArray)
+RCT_EXPORT_VIEW_PROPERTY(clipContent, BOOL)
 @end
 
 @interface RCT_EXTERN_MODULE(CraftoonReaderManager, RCTViewManager)

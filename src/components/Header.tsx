@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import {
   File,
-  BookPlus,
+  Download,
   Check,
   LibraryBig,
   SquarePen,
@@ -72,30 +72,30 @@ export const Header: React.FC<HeaderProps> = ({
       onEmail={reading ? onEmail : undefined} emailLabel="Email comic" emailing={emailing}
       trailing={!reading ? <PageNavigator dismissSignal={pageMenuDismissSignal} currentPageIndex={currentPageIndex} totalPages={totalPages}
         onPrevious={onPrevPage} onNext={onNextPage} onAddPage={onAddPage} onDeletePage={onDeletePage} /> : undefined}>
-      {!reading && <View style={screenChrome.action}>
-        <TemplatePicker onSelect={onCreateLayout} />
-      </View>}
       <View style={styles.actionGroup}>
-        {!reading && <View ref={newButton} collapsable={false}><TouchableOpacity accessibilityRole="button" accessibilityLabel="New"
-          accessibilityHint="Start a blank comic" style={screenChrome.action} onPress={openNew} activeOpacity={0.7}>
-          <File size={22} color={iconColors.newComic} />
-        </TouchableOpacity></View>}
         <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open Library"
           style={screenChrome.action} onPress={onLoadStory} activeOpacity={0.7}>
           <LibraryBig size={22} color={iconColors.library} />
-        </TouchableOpacity>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel={reading ? 'Edit comic' : 'Save comic'}
-          style={screenChrome.action} onPress={reading ? onEdit : onSaveStory} activeOpacity={0.7}>
-          {reading ? <SquarePen size={22} color={iconColors.canvas} /> : saveConfirmed
-            ? <Check size={22} color="#059669" /> : <BookPlus size={22} color={iconColors.save} />}
-          {!reading && saveConfirmed && <View style={styles.savedToast} pointerEvents="none">
-            <Text style={styles.savedText} accessibilityLiveRegion="polite">Saved</Text>
-          </View>}
         </TouchableOpacity>
         {!reading && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Read comic"
           style={screenChrome.action} onPress={onRead} activeOpacity={0.7}>
           <Glasses size={22} color={iconColors.read} />
         </TouchableOpacity>}
+        {!reading && <View ref={newButton} collapsable={false}><TouchableOpacity accessibilityRole="button" accessibilityLabel="New"
+          accessibilityHint="Start a blank comic" style={screenChrome.action} onPress={openNew} activeOpacity={0.7}>
+          <File size={22} color={iconColors.newComic} />
+        </TouchableOpacity></View>}
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel={reading ? 'Edit comic' : 'Save comic'}
+          style={screenChrome.action} onPress={reading ? onEdit : onSaveStory} activeOpacity={0.7}>
+          {reading ? <SquarePen size={22} color={iconColors.canvas} /> : saveConfirmed
+            ? <Check size={22} color="#059669" /> : <Download size={24} strokeWidth={2.5} color={iconColors.save} />}
+          {!reading && saveConfirmed && <View style={styles.savedToast} pointerEvents="none">
+            <Text style={styles.savedText} accessibilityLiveRegion="polite">Saved</Text>
+          </View>}
+        </TouchableOpacity>
+        {!reading && <View style={screenChrome.action}>
+          <TemplatePicker onSelect={onCreateLayout} />
+        </View>}
         {!reading && showHistory && <>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Undo"
             accessibilityState={{ disabled: !canUndo }} disabled={!canUndo}
