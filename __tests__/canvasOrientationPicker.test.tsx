@@ -32,6 +32,20 @@ const flushFrames = async () => {
 };
 const card = () => RN.StyleSheet.flatten(renderer!.root.findByProps({ testID: 'canvas-orientation-card' }).props.style);
 
+test.each(['adaptive', 'below'] as const)('the %s picker slides down in portrait and left in landscape', async placement => {
+  const animation = { start: jest.fn(), stop: jest.fn(), reset: jest.fn() };
+  const timing = jest.spyOn(RN.Animated, 'timing').mockReturnValue(animation);
+  await act(async () => { renderer = ReactTestRenderer.create(<CanvasOrientationPicker {...props} visible placement={placement} anchor={portrait} />); });
+  expect(card().transform[0].translateY.__getValue()).toBe(-12);
+  expect(timing).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toValue: 1, duration: 200, useNativeDriver: true }));
+  viewport = { ...viewport, width: 1024, height: 768 };
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible placement={placement} anchor={landscape} />));
+  expect(card().transform[0].translateX.__getValue()).toBe(12);
+  expect(animation.stop).toHaveBeenCalled();
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible={false} placement={placement} anchor={landscape} />));
+  expect(renderer!.root.findAllByProps({ testID: 'canvas-orientation-card' })).toHaveLength(0);
+});
+
 test('an open orientation picker follows the live Canvas button after rotation and native relayout', async () => {
   let position = portrait;
   const anchor = { ...portrait, measure: (done: (rect: CanvasPickerAnchor) => void) => done(position) };
@@ -107,11 +121,11 @@ test('canvas New menu stays below its toolbar button in landscape and after rela
   const anchor = { ...position, measure: (done: (rect: CanvasPickerAnchor) => void) => done(position) };
   await act(async () => { renderer = ReactTestRenderer.create(<CanvasOrientationPicker {...props} visible placement="below" anchor={anchor} />); });
   await flushFrames();
-  expect(card()).toMatchObject({ left: 38, top: 76, opacity: 1 });
+  expect(card()).toMatchObject({ left: 38, top: 82, opacity: 1 });
   expect(card().top).toBeGreaterThan(position.y + position.height);
   position = { ...position, x: 120, y: 44 };
   const overlay = renderer!.root.findAllByType(RN.View).find(view => view.props.accessibilityViewIsModal)!;
   await act(async () => overlay.props.onLayout());
   await flushFrames();
-  expect(card()).toMatchObject({ left: 58, top: 96, opacity: 1 });
+  expect(card()).toMatchObject({ left: 58, top: 102, opacity: 1 });
 });

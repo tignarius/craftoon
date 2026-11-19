@@ -6,8 +6,8 @@ import { reshapePanelPoint, ShapeUpdate } from '../utils/panelSnap';
 import { PANEL_ICON_SCALE } from './panelIconSizing';
 import { panelCorners } from '../utils/panelGeometry';
 
-export function PanelCornerHandle({ panel, side, scale, otherPanels = [], sheetBounds, onPreview, onCommit, onClose }: {
-  panel: ComicPanel; side: 'left' | 'right'; scale: number; otherPanels?: ComicPanel[]; sheetBounds?: { width: number; height: number };
+export function PanelCornerHandle({ panel, offset = { x: 0, y: 0 }, side, scale, otherPanels = [], sheetBounds, onPreview, onCommit, onClose }: {
+  panel: ComicPanel; offset?: { x: number; y: number }; side: 'left' | 'right'; scale: number; otherPanels?: ComicPanel[]; sheetBounds?: { width: number; height: number };
   onPreview: (update: ShapeUpdate | null) => void; onCommit: (update: ShapeUpdate) => void; onClose: () => void;
 }) {
   const index = side === 'left' ? 3 : 2;
@@ -37,9 +37,9 @@ export function PanelCornerHandle({ panel, side, scale, otherPanels = [], sheetB
   const point = panel.corners![index];
   return <View accessibilityRole="button" accessibilityLabel={`Reshape panel corner ${index + 1}`}
     onAccessibilityTap={onClose}
-    accessibilityHint="Drag left or right. Tap to return to rectangular resizing."
-    style={{ position: 'absolute', left: point.x * (panel.width - 4) - 14, top: point.y * (panel.height - 4) - 14,
-      width: 28, height: 28, zIndex: 80, alignItems: 'center', justifyContent: 'center' }}
+    accessibilityHint="Drag left or right, with light angle snaps every 15 degrees. Tap to return to rectangular resizing."
+    style={{ position: 'absolute', left: offset.x + point.x * (panel.width - 4) - 14, top: offset.y + point.y * (panel.height - 4) - 14,
+      width: 28, height: 28, zIndex: 90, alignItems: 'center', justifyContent: 'center' }}
     {...responder.panHandlers}>
     <Svg width={25 * PANEL_ICON_SCALE} height={25 * PANEL_ICON_SCALE} viewBox="0 0 28 28" pointerEvents="none">
       <Polygon points="8,5 20,5 24,22 4,22" fill="rgba(255,255,255,0.94)" stroke="#FFFFFF" strokeWidth={4.5} strokeLinejoin="round" />

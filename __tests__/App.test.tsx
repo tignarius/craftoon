@@ -1122,6 +1122,27 @@ test('reference history captures pending native ink so undo cannot erase the lat
   expect(renderer.root.findByType(Workspace).props.panels[0].tracingImage.rotation).toBe(0);
 });
 
+test('rapid reference hide/show requests are serialized without losing visibility or Undo history', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book','editor'));
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 30,y: 40,width: 200,height: 180 }));
+  const workspace = () => renderer.root.findByType(Workspace).props;
+  const id = workspace().panels[0].id;
+  (storyLibrary.pickTracingImage as jest.Mock).mockResolvedValueOnce({ uri: 'file:///reference.png',width: 100,height: 100 });
+  await act(async () => workspace().onImportTracingImage(id));
+  const original = workspace().panels[0].tracingImage;
+  let finishCapture!: () => void;
+  (storyLibrary.capturePages as jest.Mock).mockImplementationOnce(items => new Promise(resolve => { finishCapture = () => resolve(items); }));
+  let hiding!: Promise<void>, showing!: Promise<void>;
+  await act(async () => { hiding = workspace().onTracingImageChange(id,{ ...original,visible: false }); });
+  await act(async () => { showing = workspace().onTracingImageChange(id,{ ...original,visible: true }); });
+  await act(async () => { finishCapture(); await Promise.all([hiding,showing]); });
+  expect(workspace().panels[0].tracingImage).toEqual({ ...original,visible: true });
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(workspace().panels[0].tracingImage.visible).toBe(false);
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(workspace().panels[0].tracingImage).toEqual(original);
+});
+
 test('opening, moving and closing image controls always keeps the panel in Draw mode', async () => {
   await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book','editor'));
   await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 30,y: 40,width: 200,height: 180 }));

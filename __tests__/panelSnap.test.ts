@@ -10,6 +10,45 @@ const left: ComicPanel = { id: 'left', x: 12, y: 12, width: 300, height: 400,
   corners: [{ x: 0, y: 0 }, { x: 0.6, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }] };
 const right: ComicPanel = { id: 'right', ...fitPanelBesideNeighbors({ x: 210, y: 12, width: 440, height: 400 }, [left], bounds) };
 
+const anglePanel: ComicPanel = { id: 'angle', x: 800, y: 100, width: 1000, height: 300 };
+const angleBounds = { width: 3000, height: 1600 };
+const visibleAngle = (panel: ComicPanel, side: 'left' | 'right') => {
+  const points = renderedCorners(panel), top = points[side === 'left' ? 0 : 1], bottom = points[side === 'left' ? 3 : 2];
+  return Math.atan2(bottom.x - top.x, bottom.y - top.y) * 180 / Math.PI;
+};
+
+test.each((['left', 'right'] as const).flatMap(side => [-60, -45, -30, -15, 0, 15, 30, 45, 60].map(angle => ({ side, angle }))))(
+  'the $side corner lightly snaps its visible edge to $angle degrees', ({ side, angle }) => {
+    const dx = Math.tan((angle + 1) * Math.PI / 180) * anglePanel.height;
+    const result = reshapePanelPoint(anglePanel, side, dx, [], angleBounds);
+    expect(visibleAngle({ ...anglePanel, ...result }, side)).toBeCloseTo(angle, 6);
+    expect(worldCorners({ ...anglePanel, ...result }).map(p => p.y)).toEqual(worldCorners(anglePanel).map(p => p.y));
+  });
+
+test('continued dragging leaves an angle snap instead of staying locked to it', () => {
+  const snapped = reshapePanelPoint(anglePanel, 'right', Math.tan(16 * Math.PI / 180) * 300, [], angleBounds);
+  expect(visibleAngle({ ...anglePanel, ...snapped }, 'right')).toBeCloseTo(15, 6);
+  const released = reshapePanelPoint(anglePanel, 'right', Math.tan(18 * Math.PI / 180) * 300, [], angleBounds);
+  expect(visibleAngle({ ...anglePanel, ...released }, 'right')).toBeGreaterThan(17.5);
+  expect(visibleAngle({ ...anglePanel, ...released }, 'right')).toBeLessThan(18.5);
+});
+
+test('a closer neighboring alignment still takes precedence over a 15-degree hint', () => {
+  const dx = Math.tan(16 * Math.PI / 180) * 300;
+  const target = anglePanel.x + anglePanel.width + dx;
+  const above: ComicPanel = { id: 'above', x: target, y: 12, width: 100, height: 50 };
+  const result = reshapePanelPoint(anglePanel, 'right', dx, [above], angleBounds);
+  expect(worldCorners({ ...anglePanel, ...result })[2].x).toBeCloseTo(target);
+  expect(visibleAngle({ ...anglePanel, ...result }, 'right')).toBeGreaterThan(15.5);
+});
+
+test('angle snapping still stops at actual overlap and keeps the polygon valid', () => {
+  const neighbor: ComicPanel = { id: 'neighbor', x: 1880, y: 100, width: 200, height: 300 };
+  const result = reshapePanelPoint(anglePanel, 'right', 400, [neighbor], angleBounds);
+  expect(panelsCollide({ ...anglePanel, ...result }, neighbor, 0)).toBe(false);
+  expect(result.corners).toHaveLength(4);
+});
+
 test.each(['left', 'right'] as const)('the %s resize guide passes through the rendered circle and aligns with a box above', side => {
   const subject: ComicPanel = { id: 'subject', x: 300, y: 400, width: 300, height: 300,
     corners: side === 'right' ? [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.65, y: 1 }, { x: 0, y: 1 }]
@@ -207,10 +246,10 @@ test('a close fixed top corner does not block the bottom arrow from entering the
 
 test.each(['left', 'right'] as const)('a standalone %s arrow extends beyond the original frame into free canvas', side => {
   const panel: ComicPanel = { id: 'outward', x: 300, y: 100, width: 200, height: 400 };
-  const result = reshapePanelPoint(panel, side, side === 'left' ? -100 : 100, [], bounds);
+  const result = reshapePanelPoint(panel, side, side === 'left' ? -130 : 130, [], bounds);
   const before = worldCorners(panel), after = worldCorners({ ...panel, ...result });
   const index = side === 'left' ? 3 : 2;
-  expect(after[index].x).toBeCloseTo(before[index].x + (side === 'left' ? -100 : 100));
+  expect(after[index].x).toBeCloseTo(before[index].x + (side === 'left' ? -130 : 130));
   expect(after[index].y).toBe(before[index].y);
   expect(result.width).toBeGreaterThan(panel.width);
 });

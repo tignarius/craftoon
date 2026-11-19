@@ -1,8 +1,24 @@
 import { createPanelInFreeSpace } from '../src/utils/panelCreation';
 import { panelsCollide, worldCorners, panelRenderedFrame } from '../src/utils/panelGeometry';
 import { reshapePanelPoint } from '../src/utils/panelSnap';
+import { SNAP_THRESHOLD, PANEL_PADDING } from '../src/utils/panelMetrics';
 const bounds = { width: 900, height: 1200 };
 const panel = { id: 'existing', x: 300, y: 300, width: 200, height: 200 };
+
+test.each([900, 1200])('the first panel snaps near the left and right drawing limits of a %s-wide canvas', width => {
+  const result = createPanelInFreeSpace({ x: PANEL_PADDING + 10, y: 80 }, { x: width - PANEL_PADDING - 10, y: 360 }, [], { width, height: 1200 });
+  expect(result).toEqual({ x: PANEL_PADDING, y: 80, width: width - PANEL_PADDING * 2, height: 280 });
+});
+
+test('first-panel canvas edge magnets release when the pointer leaves their capture range', () => {
+  const right = bounds.width - PANEL_PADDING;
+  const inside = createPanelInFreeSpace({ x: 22, y: 80 }, { x: right - SNAP_THRESHOLD + 0.1, y: 360 }, [], bounds)!;
+  expect(inside.x + inside.width).toBeCloseTo(right);
+  const outside = createPanelInFreeSpace({ x: 22, y: 80 }, { x: right - SNAP_THRESHOLD - 0.1, y: 360 }, [], bounds)!;
+  expect(outside.x + outside.width).toBeCloseTo(right - SNAP_THRESHOLD - 0.1);
+  const free = createPanelInFreeSpace({ x: 60, y: 80 }, { x: 800, y: 360 }, [], bounds);
+  expect(free).toEqual({ x: 60, y: 80, width: 740, height: 280 });
+});
 
 test.each([0.25, 1, 4, 16])('a new box can begin beside the narrow top of an outward-sloping box (offset %s)', offset => {
   const original = { id: 'sloped', x: 12, y: 12, width: 300, height: 400 };

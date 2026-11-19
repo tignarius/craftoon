@@ -757,6 +757,108 @@ extension CraftoonInkPerformanceTests {
 
 @MainActor
 final class CraftoonPanelShapeTests: XCTestCase {
+  func testRestartedPencilContactInMarginTargetsSelectedCanvasButPreservesControlsAndOtherPanels() throws {
+    let window = CraftoonInputWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 700))
+    let controller = UIViewController()
+    window.rootViewController = controller
+    let view = RNPencilKitView(frame: CGRect(x: 100, y: 120, width: 200, height: 180))
+    let neighbor = RNPencilKitView(frame: CGRect(x: 100, y: 310, width: 200, height: 150))
+    controller.view.addSubview(view)
+    controller.view.addSubview(neighbor)
+    window.makeKeyAndVisible()
+    defer { view.isDrawingActive = false; view.removeFromSuperview(); neighbor.removeFromSuperview(); window.isHidden = true }
+    view.isDrawingActive = true
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    let canvas = view.canvasView
+    let gap = CGPoint(x: 180, y: 305)
+    let target = try XCTUnwrap(RNPencilKitView.pencilMarginTarget(at: gap, in: window, normalTarget: controller.view))
+    XCTAssertTrue(target === canvas || target.isDescendant(of: canvas))
+    let input = canvas.convert(gap, from: window)
+    XCTAssertEqual(input.x / canvas.zoomScale, 80, accuracy: 0.001)
+    XCTAssertEqual(input.y / canvas.zoomScale, 185, accuracy: 0.001)
+    XCTAssertTrue(canvas.bounds.contains(input))
+    // A regular nil-event/finger hit uses normal UIKit routing, not the margin.
+    XCTAssertFalse(window.hitTest(gap, with: nil)?.isDescendant(of: canvas) == true)
+    XCTAssertNil(RNPencilKitView.pencilMarginTarget(at: CGPoint(x: 180, y: 315), in: window, normalTarget: neighbor))
+    XCTAssertNil(RNPencilKitView.pencilMarginTarget(at: CGPoint(x: 180, y: 340), in: window, normalTarget: controller.view))
+    let button = UIView()
+    button.accessibilityTraits = .button
+    let glyph = UIView()
+    button.addSubview(glyph)
+    XCTAssertNil(RNPencilKitView.pencilMarginTarget(at: gap, in: window, normalTarget: glyph))
+    XCTAssertNil(RNPencilKitView.pencilMarginTarget(at: gap, in: window, normalTarget: UIButton()))
+    view.isDrawingActive = false // Includes switching to Layout or image manipulation.
+    XCTAssertNil(RNPencilKitView.pencilMarginTarget(at: gap, in: window, normalTarget: controller.view))
+  }
+
+  func testStrokeContinuityNeverClaimsANewContact() {
+    XCTAssertFalse(CraftoonStrokeContinuity.shouldContinue(active: false, phases: [.moved]))
+    XCTAssertFalse(CraftoonStrokeContinuity.shouldContinue(active: true, phases: [.began]))
+    XCTAssertFalse(CraftoonStrokeContinuity.shouldContinue(active: true, phases: [.stationary, .began]))
+    XCTAssertTrue(CraftoonStrokeContinuity.shouldContinue(active: true, phases: [.moved]))
+    XCTAssertTrue(CraftoonStrokeContinuity.shouldContinue(active: true, phases: [.stationary]))
+    XCTAssertTrue(CraftoonStrokeContinuity.shouldContinue(active: true, phases: [.ended]))
+    XCTAssertTrue(CraftoonStrokeContinuity.shouldContinue(active: true, phases: nil))
+  }
+
+  func testActiveStrokeCanLeaveAndReenterPanelWhileItsMaskStaysClipped() throws {
+    let points = [["x": 0.4, "y": 0], ["x": 1, "y": 0], ["x": 1, "y": 1], ["x": 0, "y": 1]] as NSArray
+    let surface = CraftoonPanelClipView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    let view = RNPencilKitView(frame: surface.bounds)
+    surface.polygonPoints = points
+    view.polygonPoints = points
+    surface.addSubview(view)
+    view.isDrawingActive = true
+    let canvas = view.canvasView
+    canvas.isUserInteractionEnabled = true
+    surface.layoutIfNeeded()
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    let mask = try XCTUnwrap(view.layer.mask as? CAShapeLayer)
+    let surfaceMask = try XCTUnwrap(surface.layer.mask)
+    let outsideCorner = CGPoint(x: 10, y: 10), outsideBounds = CGPoint(x: 240, y: 40)
+    XCTAssertFalse(view.point(inside: outsideCorner, with: nil))
+    XCTAssertFalse(surface.point(inside: outsideBounds, with: nil))
+    view.canvasViewDidBeginUsingTool(canvas)
+    for point in [CGPoint(x: 120, y: 20), outsideCorner, outsideBounds, CGPoint(x: 140, y: 40)] {
+      XCTAssertTrue(surface.point(inside: point, with: nil))
+      XCTAssertTrue(view.point(inside: point, with: nil))
+      XCTAssertTrue(canvas.point(inside: view.convert(point, to: canvas), with: nil))
+      let target = try XCTUnwrap(surface.hitTest(point, with: nil))
+      XCTAssertTrue(target === canvas || target.isDescendant(of: canvas))
+      XCTAssertTrue(view.layer.mask === mask)
+      XCTAssertTrue(surface.layer.mask === surfaceMask)
+    }
+    XCTAssertFalse(try XCTUnwrap(mask.path).contains(outsideCorner))
+    XCTAssertFalse(try XCTUnwrap(mask.path).contains(outsideBounds))
+    view.canvasViewDidEndUsingTool(canvas)
+    XCTAssertFalse(view.point(inside: outsideCorner, with: nil))
+    XCTAssertFalse(surface.point(inside: outsideBounds, with: nil))
+    XCTAssertFalse(canvas.point(inside: outsideBounds, with: nil))
+    XCTAssertTrue(view.point(inside: CGPoint(x: 140, y: 40), with: nil))
+  }
+
+  func testLiveViewportDoesNotResetDuringAnActiveStroke() throws {
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 150))
+    view.isDrawingActive = true
+    let canvas = view.canvasView
+    view.setNeedsLayout()
+    view.layoutIfNeeded()
+    let size = canvas.bounds.size, zoom = canvas.zoomScale, offset = canvas.contentOffset
+    view.canvasViewDidBeginUsingTool(canvas)
+    view.renderScale = 3
+    view.layoutIfNeeded()
+    XCTAssertEqual(canvas.bounds.size, size)
+    XCTAssertEqual(canvas.zoomScale, zoom)
+    XCTAssertEqual(canvas.contentOffset, offset)
+    view.canvasViewDidEndUsingTool(canvas)
+    view.layoutIfNeeded()
+    XCTAssertEqual(canvas.bounds.size, CGSize(width: 792, height: 642))
+    XCTAssertEqual(canvas.zoomScale, 3)
+    XCTAssertEqual(canvas.contentOffset, CGPoint(x: -32 * canvas.zoomScale, y: -32 * canvas.zoomScale))
+  }
+
   func testRepeatedActiveUpdatesDoNotStealPopoverFocusOrResetSelectedInk() throws {
     let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 500))
     let controller = UIViewController()
@@ -926,13 +1028,13 @@ final class CraftoonPanelShapeTests: XCTestCase {
       view.renderScale = scale
       view.layoutIfNeeded()
       XCTAssertEqual(canvas.zoomScale, CGFloat(scale), accuracy: 0.001)
-      XCTAssertEqual(canvas.bounds.width, 200 * CGFloat(scale), accuracy: 0.001)
-      XCTAssertEqual(canvas.bounds.height, 150 * CGFloat(scale), accuracy: 0.001)
-      XCTAssertEqual(canvas.frame.width, 200, accuracy: 0.001)
-      XCTAssertEqual(canvas.frame.height, 150, accuracy: 0.001)
+      XCTAssertEqual(canvas.bounds.width, 264 * CGFloat(scale), accuracy: 0.001)
+      XCTAssertEqual(canvas.bounds.height, 214 * CGFloat(scale), accuracy: 0.001)
+      XCTAssertEqual(canvas.frame.width, 264, accuracy: 0.001)
+      XCTAssertEqual(canvas.frame.height, 214, accuracy: 0.001)
       XCTAssertEqual(canvas.drawing.bounds, originalBounds)
       XCTAssertEqual(canvas.drawing.strokes[0].path[0].location, CGPoint(x: 20, y: 30))
-      XCTAssertEqual(canvas.contentOffset, .zero)
+      XCTAssertEqual(canvas.contentOffset, CGPoint(x: -32 * canvas.zoomScale, y: -32 * canvas.zoomScale))
       let point = view.convert(CGPoint(x: 40, y: 60), to: canvas)
       XCTAssertEqual(point.x / canvas.zoomScale, 40, accuracy: 0.001)
       XCTAssertEqual(point.y / canvas.zoomScale, 60, accuracy: 0.001)

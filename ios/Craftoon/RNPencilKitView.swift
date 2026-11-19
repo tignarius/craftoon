@@ -3,6 +3,62 @@ import PencilKit
 import React
 import UIKit.UIGestureRecognizerSubclass
 
+// Clipping decides what is visible; it must not end an input sequence that
+// already belongs to this canvas. New contacts still use normal hit testing.
+enum CraftoonStrokeContinuity {
+  static func shouldContinue(active: Bool, phases: [UITouch.Phase]?) -> Bool {
+    active && phases?.contains(.began) != true
+  }
+  static func shouldContinue(active: Bool, event: UIEvent?) -> Bool {
+    shouldContinue(active: active, phases: event?.allTouches?.map { $0.phase })
+  }
+}
+
+final class CraftoonContinuousCanvasView: PKCanvasView {
+  var strokeInProgress: (() -> Bool)?
+  override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+    if CraftoonStrokeContinuity.shouldContinue(active: strokeInProgress?() == true, event: event) { return true }
+    return super.point(inside: point, with: event)
+  }
+}
+
+enum CraftoonStrokeDiagnostics {
+  static let enabled = ProcessInfo.processInfo.arguments.contains("--craftoon-measure-stroke-continuity")
+  private static let session = UUID().uuidString
+  private static let queue = DispatchQueue(label: "com.craftoon.stroke-diagnostics", qos: .utility)
+  static func saveImages(_ images: [String: UIImage]) {
+    guard enabled else { return }
+    queue.async {
+      do {
+        let root = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        for (name, image) in images {
+          try image.pngData()?.write(to: root.appendingPathComponent(name), options: .atomic)
+        }
+      } catch { NSLog("Stroke diagnostic image failed: %@", error.localizedDescription) }
+    }
+  }
+  static func write(_ values: [String: Any]) {
+    guard enabled else { return }
+    var record = values
+    record["session"] = session
+    record["timeMs"] = Date().timeIntervalSince1970 * 1000
+    let snapshot = record
+    queue.async {
+      do {
+        let root = try FileManager.default.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let url = root.appendingPathComponent("CraftoonStrokeContinuity.jsonl")
+        var data = try JSONSerialization.data(withJSONObject: snapshot, options: [.sortedKeys])
+        data.append(10)
+        if !FileManager.default.fileExists(atPath: url.path) { try data.write(to: url, options: .atomic); return }
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        if try handle.seekToEnd() > 500_000 { try handle.truncate(atOffset: 0); try handle.seek(toOffset: 0) }
+        try handle.write(contentsOf: data)
+      } catch { NSLog("Stroke diagnostic write failed: %@", error.localizedDescription) }
+    }
+  }
+}
+
 // Explicitly opt in at launch; no profiler connection or per-stroke logging.
 enum CraftoonPanelPerformance {
   static let paletteEnabled = ProcessInfo.processInfo.arguments.contains("--craftoon-measure-palette")
@@ -108,6 +164,141 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   // Keep the latest native drawing when a panel unmounts during page navigation.
   static var drawingCache: [String: PKDrawing] = [:]
   private static let views = NSHashTable<RNPencilKitView>.weakObjects()
+  static let pencilInputMargin: CGFloat = 32
+
+  static func pencilMarginTarget(at point: CGPoint, in window: UIWindow, normalTarget: UIView?, event: UIEvent? = nil) -> UIView? {
+    // Menus and controls keep their usual target, including the panel's
+    // toolbar outside its outline when zoomed. Fingers never use this path.
+    var target = normalTarget
+    while let view = target, view !== window {
+      if view is UIControl || view.accessibilityTraits.contains(.button) || view is UITextView { return nil }
+      target = view.superview
+    }
+    func visible(_ view: UIView) -> Bool {
+      var node: UIView? = view
+      while let current = node, current !== window {
+        if current.isHidden || current.alpha <= 0.01 || !current.isUserInteractionEnabled { return false }
+        node = current.superview
+      }
+      return node === window
+    }
+    let panels = views.allObjects.filter { $0.window === window && visible($0) }
+    // Never intercept a different panel or a normal contact inside a panel.
+    if panels.contains(where: { view in
+      CraftoonPanelShape.path(CraftoonPanelShape.points(view.polygonPoints), in: view.bounds)
+        .contains(view.convert(point, from: window))
+    }) { return nil }
+    guard let owner = panels.first(where: { view in
+      view.isDrawingActive && view.liveCanvas != nil
+        && view.convert(view.bounds, to: window).insetBy(dx: -pencilInputMargin, dy: -pencilInputMargin).contains(point)
+    }), let canvas = owner.liveCanvas else { return nil }
+    return canvas.hitTest(canvas.convert(point, from: window), with: event)
+  }
+  private static weak var diagnosticTouch: UITouch?
+  private static weak var diagnosticView: RNPencilKitView?
+  private static var diagnosticSequence = 0
+  private static var diagnosticSignatures: [String: Data] = [:]
+  private static var diagnosticLeftPanel = false
+  private static var diagnosticReenteredPanel = false
+
+  static func recordStrokeEvent(_ event: UIEvent, stage: String) {
+    guard CraftoonStrokeDiagnostics.enabled, event.type == .touches else { return }
+    for touch in event.allTouches ?? [] where touch.type == .pencil {
+      if stage == "before_dispatch", touch.phase == .began || touch.phase == .ended || touch.phase == .cancelled {
+        let target = touch.view
+        CraftoonStrokeDiagnostics.write(["stage": "pencil_contact", "phase": touch.phase.rawValue,
+          "target": target.map { String(describing: type(of: $0)) } ?? "none",
+          "inWindow": String(describing: touch.location(in: target?.window))])
+      }
+      if stage == "after_dispatch", touch.phase == .ended || touch.phase == .cancelled {
+        let owner = diagnosticView ?? views.allObjects.first { $0.isDrawingActive && $0.window != nil }
+        let sequence = diagnosticSequence
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak owner] in
+          owner?.captureStrokeDisplay(sequence: sequence)
+        }
+      }
+    }
+    if diagnosticTouch == nil {
+      for touch in event.allTouches ?? [] where touch.phase == .began {
+        guard let touched = touch.view, let owner = views.allObjects.first(where: { view in
+          guard view.isDrawingActive, let canvas = view.liveCanvas else { return false }
+          return touched === canvas || touched.isDescendant(of: canvas)
+        }) else { continue }
+        diagnosticTouch = touch
+        diagnosticView = owner
+        diagnosticSequence += 1
+        diagnosticSignatures.removeAll()
+        diagnosticLeftPanel = false
+        diagnosticReenteredPanel = false
+        break
+      }
+    }
+    guard let touch = diagnosticTouch, let owner = diagnosticView, let canvas = owner.liveCanvas else { return }
+    let point = touch.location(in: owner)
+    let inside = CraftoonPanelShape.path(CraftoonPanelShape.points(owner.polygonPoints), in: owner.bounds).contains(point)
+    if !inside { diagnosticLeftPanel = true }
+    if inside && diagnosticLeftPanel { diagnosticReenteredPanel = true }
+    let values: [String: Any] = ["stage": stage, "sequence": diagnosticSequence,
+      "phase": touch.phase.rawValue, "inputType": touch.type.rawValue,
+      "insideBounds": owner.bounds.contains(point),
+      "insidePolygon": CraftoonPanelShape.path(CraftoonPanelShape.points(owner.polygonPoints), in: owner.bounds).contains(point),
+      "toolActive": owner.isUsingTool, "pkGesture": canvas.drawingGestureRecognizer.state.rawValue,
+      "canvasEnabled": canvas.isUserInteractionEnabled, "drawingActive": owner.isDrawingActive,
+      "zoom": canvas.zoomScale,
+      "offsetX": canvas.contentOffset.x, "offsetY": canvas.contentOffset.y,
+      "tool": String(describing: type(of: canvas.tool)),
+      "viewportWidth": canvas.bounds.width, "viewportHeight": canvas.bounds.height]
+    if let signature = try? JSONSerialization.data(withJSONObject: values, options: [.sortedKeys]), diagnosticSignatures[stage] != signature {
+      diagnosticSignatures[stage] = signature
+      var snapshot = values
+      snapshot["strokeCount"] = canvas.drawing.strokes.count
+      CraftoonStrokeDiagnostics.write(snapshot)
+    }
+    if stage == "after_dispatch", touch.phase == .ended || touch.phase == .cancelled {
+      diagnosticTouch = nil
+      diagnosticView = nil
+    }
+  }
+
+  // Capture only after a leave/re-enter stroke in the explicitly enabled
+  // diagnostic session. No snapshots or raster exports in normal drawing.
+  private func captureStrokeDisplay(sequence: Int, reason: String = "stroke") {
+    guard CraftoonStrokeDiagnostics.enabled, !isUsingTool,
+      let window, let canvas = liveCanvas else { return }
+    let slot = sequence % 3
+    let screenName = "CraftoonStrokeScreen-\(reason)-\(slot).png"
+    let inkName = "CraftoonStrokeExpected-\(reason)-\(slot).png"
+    let format = UIGraphicsImageRendererFormat()
+    format.scale = 1
+    var rendered = false
+    let screen = UIGraphicsImageRenderer(bounds: window.bounds, format: format).image { _ in
+      rendered = window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+    }
+    let drawing = canvas.drawing
+    let rect = bounds
+    let ink = UIGraphicsImageRenderer(bounds: rect, format: format).image { context in
+      UIColor.white.setFill()
+      context.fill(rect)
+      drawing.image(from: rect, scale: 1).draw(in: rect)
+    }
+    var ancestors: [[String: Any]] = []
+    var ancestor: UIView? = self
+    while let view = ancestor {
+      ancestors.append(["class": String(describing: type(of: view)),
+        "frameInWindow": String(describing: view.convert(view.bounds, to: window)),
+        "clips": view.clipsToBounds, "hidden": view.isHidden, "alpha": view.alpha,
+        "mask": view.layer.mask != nil])
+      ancestor = view.superview
+    }
+    CraftoonStrokeDiagnostics.write(["stage": "display_capture", "sequence": sequence, "reason": reason,
+      "renderScale": renderScale,
+      "screenFile": screenName, "expectedFile": inkName, "screenRendered": rendered,
+      "panelBounds": String(describing: bounds), "panelInWindow": String(describing: convert(bounds, to: window)),
+      "canvasInWindow": String(describing: canvas.convert(canvas.bounds, to: window)),
+      "canvasBounds": String(describing: canvas.bounds), "canvasContentSize": String(describing: canvas.contentSize),
+      "previewHidden": previewView.isHidden, "ancestors": ancestors, "strokeCount": drawing.strokes.count])
+    CraftoonStrokeDiagnostics.saveImages([screenName: screen, inkName: ink])
+  }
   private static let memoryObserver = NotificationCenter.default.addObserver(
     forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main
   ) { _ in
@@ -285,23 +476,46 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   // The React panel still positions/scales its controls and reference image.
   // Cancel that scale for the ink viewport, then zoom PencilKit's content so
   // it renders new tiles at the displayed size without modifying PKDrawing.
-  @objc var renderScale: Double = 1 { didSet { if renderScale != oldValue { setNeedsLayout() } } }
+  @objc var renderScale: Double = 1 {
+    didSet {
+      guard renderScale != oldValue else { return }
+      setNeedsLayout()
+      if CraftoonStrokeDiagnostics.enabled {
+        let sequence = Self.diagnosticSequence
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+          self?.captureStrokeDisplay(sequence: sequence, reason: "zoom")
+        }
+      }
+    }
+  }
   private var inkRenderScale: CGFloat {
     renderScale.isFinite ? max(1, CGFloat(renderScale)) : 1
   }
 
   private func layoutInkCanvas(_ canvas: PKCanvasView) {
+    // PencilKit can lay out while the tip crosses the viewport boundary. A
+    // zoom/offset reset during that stroke can interrupt the current gesture.
+    if canvas === liveCanvas, isUsingTool { return }
     let scale = inkRenderScale
-    let size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+    // A small input margin accepts a fresh Pencil contact in blank space,
+    // including sensor restarts at the screen edge. Ink stays in panel
+    // coordinates and the existing parent mask crops everything outside it.
+    let screenScale = window.map { convert(bounds, to: $0).width / max(1, bounds.width) } ?? 1
+    let padding = Self.pencilInputMargin / max(0.01, screenScale)
+    let size = CGSize(width: (bounds.width + padding * 2) * scale, height: (bounds.height + padding * 2) * scale)
     let transform = CGAffineTransform(scaleX: 1 / scale, y: 1 / scale)
     if canvas.transform != transform { canvas.transform = transform }
     if canvas.bounds.size != size { canvas.bounds.size = size }
     let center = CGPoint(x: bounds.midX, y: bounds.midY)
     if canvas.center != center { canvas.center = center }
+    let inset = UIEdgeInsets(top: padding * scale, left: padding * scale, bottom: padding * scale, right: padding * scale)
+    if canvas.contentInset != inset { canvas.contentInset = inset }
     if canvas.maximumZoomScale < scale { canvas.maximumZoomScale = scale }
     if canvas.zoomScale != scale { canvas.setZoomScale(scale, animated: false) }
-    if canvas.contentSize != size { canvas.contentSize = size }
-    if canvas.contentOffset != .zero { canvas.contentOffset = .zero }
+    let content = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+    if canvas.contentSize != content { canvas.contentSize = content }
+    let offset = CGPoint(x: -padding * scale, y: -padding * scale)
+    if canvas.contentOffset != offset { canvas.contentOffset = offset }
     if canvas.pinchGestureRecognizer?.isEnabled == true { canvas.pinchGestureRecognizer?.isEnabled = false }
   }
   private let previewView = UIImageView()
@@ -318,8 +532,6 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     CATransaction.begin()
     CATransaction.setDisableActions(true)
     if CraftoonPanelShape.isRectangle(points) {
-      // Rectangular panels already clip via clipsToBounds; avoid an extra
-      // offscreen compositing pass for their live renderer and preview.
       layer.mask = nil
     } else {
       inkPolygonMask.frame = bounds
@@ -330,11 +542,20 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   }
 
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-    super.point(inside: point, with: event)
+    if continuesDrawingStroke(with: event) { return true }
+    return super.point(inside: point, with: event)
       && CraftoonPanelShape.path(CraftoonPanelShape.points(polygonPoints), in: bounds).contains(point)
   }
 
+  func continuesDrawingStroke(with event: UIEvent?) -> Bool {
+    CraftoonStrokeContinuity.shouldContinue(active: isDrawingActive && isUsingTool, event: event)
+  }
+
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+    if continuesDrawingStroke(with: event), let canvas = liveCanvas {
+      return canvas.hitTest(convert(point, to: canvas), with: event) ?? canvas
+    }
     guard self.point(inside: point, with: event) else { return nil }
     return super.hitTest(point, with: event)
   }
@@ -380,7 +601,8 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   }
 
   private func makeCanvas() -> PKCanvasView {
-    let canvas = PKCanvasView()
+    let canvas = CraftoonContinuousCanvasView()
+    canvas.strokeInProgress = { [weak self] in self?.isDrawingActive == true && self?.isUsingTool == true }
     canvas.drawingPolicy = .anyInput
     canvas.backgroundColor = .white
     canvas.isOpaque = true
@@ -681,6 +903,10 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   }
 
   private func applyDrawing(_ drawing: PKDrawing, reference: String? = nil, geometryChange: Bool = false) {
+    if CraftoonStrokeDiagnostics.enabled {
+      CraftoonStrokeDiagnostics.write(["stage": "apply_drawing", "toolActive": isUsingTool,
+        "geometryChange": geometryChange, "strokeCount": drawing.strokes.count])
+    }
     if geometryChange {
       if pendingGeometrySource == nil { pendingGeometrySource = drawingData }
     } else { pendingGeometrySource = nil }
@@ -710,6 +936,9 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
 
   func canvasViewDidBeginUsingTool(_ canvasView: PKCanvasView) {
     guard canvasView === liveCanvas else { return }
+    if CraftoonStrokeDiagnostics.enabled {
+      CraftoonStrokeDiagnostics.write(["stage": "tool_begin", "pkGesture": canvasView.drawingGestureRecognizer.state.rawValue])
+    }
     isUsingTool = true
     drawingRevision += 1
     syncTimer?.invalidate()
@@ -717,7 +946,12 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
 
   func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
     guard canvasView === liveCanvas else { return }
+    if CraftoonStrokeDiagnostics.enabled {
+      CraftoonStrokeDiagnostics.write(["stage": "tool_end", "pkGesture": canvasView.drawingGestureRecognizer.state.rawValue,
+        "strokeCount": canvasView.drawing.strokes.count])
+    }
     isUsingTool = false
+    setNeedsLayout()
     CraftoonDraftRecovery.shared.flush()
     scheduleDrawingSync()
   }
@@ -725,6 +959,10 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
     guard canvasView === liveCanvas else { return }
     guard !isApplyingDrawing else { return }
+    if CraftoonStrokeDiagnostics.enabled {
+      CraftoonStrokeDiagnostics.write(["stage": "drawing_changed", "toolActive": isUsingTool,
+        "strokeCount": canvasView.drawing.strokes.count])
+    }
     pendingGeometrySource = nil
     drawingRevision += 1
     if !panelId.isEmpty {
@@ -983,6 +1221,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
 
   private func releaseCanvas() {
     guard let canvas = liveCanvas else { return }
+    isUsingTool = false
     canvas.delegate = nil
     detachToolPicker(from: canvas)
     committedPreviews.forEach { $0.removeFromSuperview() }

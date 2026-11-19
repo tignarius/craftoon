@@ -4,13 +4,14 @@ import {
   StyleSheet,
   PanResponder,
   LayoutChangeEvent,
+  useWindowDimensions,
 } from 'react-native';
 import Svg, { Polygon } from 'react-native-svg';
 import { CANVAS_VIEW_INSET, expandCanvasToViewport, fitCanvas } from '../utils/canvasFormat';
 import { AppText as Text } from './AppText';
 import { Panel } from './Panel';
 import { SpeechBubble } from './SpeechBubble';
-import { createPanelInFreeSpace } from '../utils/panelCreation';
+import { createPanelInFreeSpace, snapCanvasEdgeX } from '../utils/panelCreation';
 import { panelsCollide, panelFocusTransform, worldCorners } from '../utils/panelGeometry';
 import { ComicPanel, ComicBubble, PanelMode, ToolType, TracingImage } from '../types/comic';
 
@@ -74,6 +75,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   onDeleteBubble,
   onSheetBoundsChange,
 }) => {
+  const windowSize = useWindowDimensions();
+  const bottomClearance = windowSize.height >= windowSize.width ? 20 : 0;
   const [selectionTiming, setSelectionTiming] = useState<{ id: string; time: number } | null>(null);
   const markSelection = (id: string) => setSelectionTiming({ id, time: Date.now() });
   const [selectedBubbleId, setSelectedBubbleId] = useState<string | null>(null);
@@ -155,6 +158,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         const maxH = sheetBoundsRef.current.height - WORKSPACE_PADDING;
         startX = Math.max(WORKSPACE_PADDING, Math.min(maxW, startX));
         startY = Math.max(WORKSPACE_PADDING, Math.min(maxH, startY));
+        if (!panelsRef.current.length) { startX = snapCanvasEdgeX(startX, sheetBoundsRef.current.width); }
 
         startPointRef.current = { x: startX, y: startY };
         const initialRect = { x: startX, y: startY, width: 0, height: 0 };
@@ -171,6 +175,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         let endX = locationX;
         let endY = locationY;
         const activeGuides: { type: 'vertical' | 'horizontal'; pos: number }[] = [];
+        if (!panelsRef.current.length) {
+          const snapped = snapCanvasEdgeX(endX, sheetBoundsRef.current.width);
+          if (snapped !== endX) { activeGuides.push({ type: 'vertical', pos: snapped }); }
+          endX = snapped;
+        }
 
         // 드래그 끝점 자석 스냅
         for (const p of panelsRef.current) {
@@ -229,6 +238,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   ).current;
 
   return (
+    <View style={{ flex: 1, backgroundColor: '#F1F5F9', paddingBottom: bottomClearance }}>
     <View style={styles.workspaceContainer} onLayout={handleViewportLayout}>
       <View testID="workspace-zoom-frame" style={{ width: canvasSize.width * scale, height: canvasSize.height * scale }}>
       <View style={[styles.sheet, focusedPanel && styles.focusedSheet, { width: canvasSize.width, height: canvasSize.height,
@@ -341,6 +351,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
         </View>
       </View>
       </View>
+    </View>
     </View>
   );
 };

@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { PanResponder, TouchableOpacity } from 'react-native';
+import { PanResponder, StyleSheet, TouchableOpacity, View } from 'react-native';
+import type { PanelCorners } from '../src/types/comic';
+import { PanelSurface } from '../src/components/PanelSurface';
 import { OpacitySlider, TracingImageControls } from '../src/components/TracingImageControls';
 import { fitTracingImage, resizeTracingImage, rotateTracingImage, gizmoTransform, migrateTracingPage } from '../src/utils/tracingImage';
 
@@ -126,4 +128,119 @@ test('file-backed reference identity survives fitting, zooming and rotation', ()
   const changed = rotateTracingImage(resizeTracingImage(fitted, 1.5), 45);
   expect(changed.imageRef).toBe(source.imageRef);
   expect(changed.uri).toBe(source.uri);
+});
+
+test('the image controller stays in place while tools unfold to the right and close without blocking input', async () => {
+  jest.useFakeTimers();
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    const props = { image,editing: false,bounds,canvasScale: 0.7,onCommit: jest.fn(),onPreview: jest.fn(),onEditingChange: jest.fn() };
+    await act(async () => { renderer = ReactTestRenderer.create(<TracingImageControls {...props} />); });
+    const button = (label: string) => renderer.root.findAllByType(TouchableOpacity).find(b => b.props.accessibilityLabel === label)!;
+    const toggle = button('Show image controls');
+    const eye = StyleSheet.flatten(button('Hide reference image').props.style);
+    const before = StyleSheet.flatten(toggle.props.style);
+    const toolbar = StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.style);
+    expect(before.left + before.width / 2 - (eye.left + eye.width / 2) - 24).toBe(10);
+    expect(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.pointerEvents).toBe('box-none');
+    await act(async () => toggle.props.onPress());
+    expect(props.onEditingChange).toHaveBeenLastCalledWith(true);
+    await act(async () => renderer.update(<TracingImageControls {...props} editing />));
+    expect(button('Hide image controls')).toBe(toggle);
+    expect(StyleSheet.flatten(toggle.props.style)).toEqual(before);
+    expect(StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.style)).toEqual(toolbar);
+    const tool = renderer.root.findByProps({ testID: 'reference-reveal-tool-0' });
+    expect(StyleSheet.flatten(tool.props.style).left).toBeGreaterThan(before.left + before.width);
+    expect(tool.props.pointerEvents).toBe('none'); // Sliding tools cannot steal a rapid second tap on Done.
+    await act(async () => { jest.advanceTimersByTime(300); });
+    expect(renderer.root.findByProps({ testID: 'reference-reveal-tool-0' }).props.pointerEvents).toBe('box-none');
+    await act(async () => renderer.update(<TracingImageControls {...props} />));
+    expect(renderer.root.findByProps({ testID: 'reference-reveal-tool-0' }).props.pointerEvents).toBe('none');
+    expect(renderer.root.findAllByProps({ testID: 'reference-image-gesture-surface' })).toHaveLength(0);
+    await act(async () => { jest.advanceTimersByTime(300); });
+    expect(renderer.root.findAllByProps({ testID: 'reference-reveal-tool-0' })).toHaveLength(0);
+  } finally {
+    if (renderer) { await act(async () => renderer.unmount()); }
+    jest.useRealTimers();
+  }
+});
+
+test('reference controls follow the current bottom-left vertex and fit the shortened bottom edge', async () => {
+  const corners: PanelCorners = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.9, y: 1 }, { x: 0.45, y: 1 }];
+  const props = { image,editing: true,bounds,canvasScale: 0.7,onCommit: jest.fn(),onPreview: jest.fn(),onEditingChange: jest.fn(), corners };
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = ReactTestRenderer.create(<TracingImageControls {...props} />); });
+  const toolbar = () => StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.style);
+  expect(toolbar().left).toBeCloseTo(185);
+  expect(toolbar().left + toolbar().maxWidth).toBeLessThanOrEqual(360);
+  expect(toolbar().top).toBeLessThan(300);
+  const changed: PanelCorners = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.8, y: 1 }, { x: 0.3, y: 1 }];
+  await act(async () => renderer.update(<TracingImageControls {...props} corners={changed} />));
+  expect(toolbar().left).toBeCloseTo(125);
+  expect(toolbar().left + toolbar().maxWidth).toBeLessThanOrEqual(320);
+  expect(renderer.root.findByType(PanelSurface).props.polygonPoints).toBe(changed);
+  await act(async () => renderer.unmount());
+});
+
+test('normal image controls sit close to the bottom border using the visible circle instead of its hit area', async () => {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = ReactTestRenderer.create(<TracingImageControls image={image} editing={false}
+    bounds={bounds} canvasScale={0.7} onCommit={jest.fn()} onPreview={jest.fn()} onEditingChange={jest.fn()} />); });
+  const toolbar = StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.style);
+  const eye = renderer.root.findAllByType(TouchableOpacity).find(b => b.props.accessibilityLabel === 'Hide reference image')!;
+  const target = StyleSheet.flatten(eye.props.style);
+  const circle = StyleSheet.flatten(eye.findAllByType(View).find(v => v.props.pointerEvents === 'none')!.props.style);
+  const circleBottom = toolbar.top + target.top + (target.height + circle.height) / 2;
+  expect(bounds.height - circleBottom).toBeCloseTo(8.5);
+  await act(async () => renderer.unmount());
+});
+
+test('a steep left border shifts every image control right without changing its bottom alignment', async () => {
+  const size = { width: 400, height: 160 };
+  const corners: PanelCorners = [{ x: 0.7, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+  const props = { image,editing: false,bounds: size,corners,canvasScale: 0.7,onCommit: jest.fn(),onPreview: jest.fn(),onEditingChange: jest.fn() };
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = ReactTestRenderer.create(<TracingImageControls {...props} />); });
+  const toolbarStyle = () => StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.style);
+  const before = toolbarStyle();
+  expect(before.left).toBeGreaterThan(5);
+  await act(async () => renderer.update(<TracingImageControls {...props} editing />));
+  expect(toolbarStyle()).toEqual(before); // Opening does not move the controller.
+  const centers = renderer.root.findAllByType(TouchableOpacity)
+    .filter(b => ['Hide reference image', 'Hide image controls'].includes(b.props.accessibilityLabel))
+    .map(button => { const style = StyleSheet.flatten(button.props.style);
+      return { x: before.left + style.left + style.width / 2, y: before.top + style.top + style.height / 2 }; });
+  for (let i = 0; i < 5; i++) {
+    const style = StyleSheet.flatten(renderer.root.findByProps({ testID: `reference-reveal-tool-${i}` }).props.style);
+    centers.push({ x: before.left + style.left + style.width / 2, y: before.top + style.top + style.height / 2 });
+  }
+  for (const center of centers) {
+    const distance = (160 * (center.x - 280) + 280 * center.y) / Math.hypot(160, 280);
+    expect(distance).toBeGreaterThanOrEqual(16 - 0.00001); // Radius 12 plus four-point clearance.
+  }
+  await act(async () => renderer.unmount());
+});
+
+test('focused reference controls stay outside the bottom edge at normal size while gestures keep panel zoom', async () => {
+  const corners: PanelCorners = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.9, y: 1 }, { x: 0.45, y: 1 }];
+  const props = { image,editing: true,bounds,canvasScale: 0.7,onCommit: jest.fn(),onPreview: jest.fn(),onEditingChange: jest.fn(),corners };
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = ReactTestRenderer.create(<TracingImageControls {...props} />); });
+  const button = () => renderer.root.findAllByType(TouchableOpacity).find(b => b.props.accessibilityLabel === 'Adjust reference opacity')!;
+  const buttonStyle = StyleSheet.flatten(button().props.style);
+  await act(async () => renderer.update(<TracingImageControls {...props} focused displayScale={4} canvasScale={2.8} />));
+  const rootStyle = StyleSheet.flatten(renderer.root.findByProps({ testID: 'panel-reference-controls' }).props.style);
+  expect(rootStyle.transform).toBeUndefined(); // The overlay lives outside the zoomed panel.
+  const toolbar = StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-fixed-toolbar' }).props.style);
+  expect(toolbar.left).toBeCloseTo(180 * 4);
+  expect(toolbar.top).toBeGreaterThan(300 * 4);
+  expect(StyleSheet.flatten(button().props.style)).toEqual(buttonStyle);
+  const surface = renderer.root.findByType(PanelSurface);
+  expect(surface.props.style.transform[0].scale).toBe(4);
+  expect(surface.props.polygonPoints).toBe(corners);
+  await act(async () => button().props.onPress());
+  expect(renderer.root.findByType(OpacitySlider).props.canvasScale).toBeCloseTo(0.7);
+  const popup = StyleSheet.flatten(renderer.root.findByProps({ testID: 'reference-opacity-popover' }).props.style);
+  expect(popup.top).toBeGreaterThan(toolbar.top);
+  await act(async () => renderer.unmount());
 });

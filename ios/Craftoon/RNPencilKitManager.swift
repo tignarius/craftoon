@@ -95,9 +95,23 @@ class CraftoonPanelClipView: RCTView {
     CATransaction.commit()
   }
   override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-    super.point(inside: point, with: event) && CraftoonPanelShape.path(CraftoonPanelShape.points(polygonPoints), in: bounds).contains(point)
+    (super.point(inside: point, with: event) && CraftoonPanelShape.path(CraftoonPanelShape.points(polygonPoints), in: bounds).contains(point))
+      || continuingStrokeView(for: event) != nil
+  }
+  private func continuingStrokeView(for event: UIEvent?) -> RNPencilKitView? {
+    guard CraftoonStrokeContinuity.shouldContinue(active: true, event: event) else { return nil }
+    func find(in view: UIView) -> RNPencilKitView? {
+      if let ink = view as? RNPencilKitView, ink.continuesDrawingStroke(with: event) { return ink }
+      for child in view.subviews { if let ink = find(in: child) { return ink } }
+      return nil
+    }
+    return find(in: self)
   }
   override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
+    if let ink = continuingStrokeView(for: event) {
+      return ink.hitTest(convert(point, to: ink), with: event)
+    }
     // RCTView can hit-test children outside its own pointInside result.
     guard self.point(inside: point, with: event) else { return nil }
     return super.hitTest(point, with: event)

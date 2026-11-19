@@ -110,12 +110,44 @@ test('transforming a tracing reference never shifts, remounts or obscures a pane
 });
 
 
+test('focused reference images render at display resolution without changing image geometry or remounting controls', async () => {
+  const reference = { uri: 'file:///reference.png', x: 8, y: 20, width: 200, height: 100, rotation: 35, opacity: 0.4 };
+  const panel = { ...panels[0], width: 400, height: 300, tracingImage: reference,
+    corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.8, y: 1 }, { x: 0.3, y: 1 }] as import('../src/types/comic').PanelCorners };
+  const options = { panel, mode: 'draw' as const, onSelect: jest.fn(), onModeChange: jest.fn(), onMove: jest.fn(),
+    onResize: jest.fn(), onDelete: jest.fn(), onDoubleTap: jest.fn(), onTracingImageChange: jest.fn(), onTracingEditingChange: jest.fn() };
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  await act(async () => { renderer = ReactTestRenderer.create(<Panel {...options} canvasScale={0.7} />); });
+  const image = renderer.root.findAllByProps({ testID: 'panel-reference-image-a' })[0];
+  const controls = renderer.root.findByProps({ testID: 'panel-reference-controls' });
+  const imageFrame = () => StyleSheet.flatten(renderer.root.findByProps({ testID: 'panel-reference-image-frame-a' }).props.style);
+  const originalFrame = imageFrame();
+  await act(async () => renderer.update(<Panel {...options} focused displayScale={4} canvasScale={2.8} />));
+  expect(renderer.root.findAllByProps({ testID: 'panel-reference-image-a' })[0]).toBe(image);
+  expect(renderer.root.findByProps({ testID: 'panel-reference-controls' })).toBe(controls);
+  const overlay = renderer.root.findByProps({ testID: 'panel-reference-overlay' });
+  const panelFrame = renderer.root.findByProps({ testID: 'panel-container' });
+  expect(overlay.parent).toBe(panelFrame.parent);
+  const overlayStyle = StyleSheet.flatten(overlay.props.style);
+  expect(overlayStyle.transform).toBeUndefined();
+  expect(overlayStyle.width).toBeCloseTo((panel.width - 4) * 4);
+  expect(overlayStyle.height).toBeCloseTo((panel.height - 4) * 4);
+  const style = StyleSheet.flatten(image.props.style);
+  expect(style.width).toBeCloseTo(reference.width * 2.8);
+  expect(style.height).toBeCloseTo(reference.height * 2.8);
+  expect(0.7 * 4 * style.transform[0].scale).toBeCloseTo(1);
+  expect(imageFrame()).toEqual(originalFrame);
+  const frame = renderer.root.findByProps({ testID: 'panel-container' });
+  expect(StyleSheet.flatten(frame.props.style).transform).toEqual([{ scale: 4 }]);
+  await act(async () => renderer.unmount());
+});
+
 test('reference controls exist only on panels with images, including when the image is hidden', async () => {
   let renderer!: ReactTestRenderer.ReactTestRenderer;
   const reference = { uri: 'data:image/png;base64,reference',x: 5,y: 5,width: 100,height: 100,rotation: 0,opacity: 0.35 };
   const onTracingImageChange = jest.fn();
   const withReference = panels.map((p,i) => i === 0 ? { ...p,tracingImage: reference } : p);
-  const options = { ...props,onTracingImageChange,onTracingEditingChange: jest.fn() };
+  const options = { ...props,panelModes: { a: 'draw' as const },onTracingImageChange,onTracingEditingChange: jest.fn() };
   await act(async () => { renderer = ReactTestRenderer.create(<Workspace {...options} panels={withReference} />); });
   const panelViews = renderer.root.findAllByType(Panel);
   const imageButtons = (panel: typeof panelViews[0]) => panel.findAllByType(TouchableOpacity)
@@ -126,7 +158,15 @@ test('reference controls exist only on panels with images, including when the im
   expect(onTracingImageChange).toHaveBeenLastCalledWith('a',{ ...reference,visible: false });
   await act(async () => renderer.update(<Workspace {...options} panels={withReference.map(p => p.id === 'a' ? { ...p,tracingImage: { ...reference,visible: false } } : p)} />));
   expect(renderer.root.findAllByType(TouchableOpacity).some(b => b.props.accessibilityLabel === 'Show reference image')).toBe(true);
-  expect(renderer.root.findAllByProps({ testID: 'panel-reference-image-a' })).toHaveLength(0);
+  const image = renderer.root.findAllByProps({ testID: 'panel-reference-image-a' })[0];
+  expect(StyleSheet.flatten(renderer.root.findByProps({ testID: 'panel-reference-image-frame-a' }).props.style).opacity).toBe(0);
+  await act(async () => renderer.update(<Workspace {...options} panels={withReference} />));
+  expect(renderer.root.findAllByProps({ testID: 'panel-reference-image-a' })[0]).toBe(image);
+  expect(StyleSheet.flatten(renderer.root.findByProps({ testID: 'panel-reference-image-frame-a' }).props.style).opacity).toBe(reference.opacity);
+  await act(async () => renderer.update(<Workspace {...options} panels={withReference} panelModes={{ a: 'layout' }} editingTracingPanelId="a" />));
+  expect(renderer.root.findAllByProps({ testID: 'panel-reference-controls' })).toHaveLength(0);
+  expect(renderer.root.findAllByProps({ accessibilityLabel: 'Resize or reshape panel' }).length).toBeGreaterThan(0);
+  expect(renderer.root.findAllByProps({ testID: 'panel-reference-image-a' })[0]).toBe(image);
   await act(async () => renderer.update(<Workspace {...options} panels={panels} />));
   expect(renderer.root.findAllByProps({ testID: 'panel-reference-controls' })).toHaveLength(0);
   await act(async () => renderer.unmount());
@@ -326,7 +366,10 @@ test('tapping the resize circle reveals only its cross-arrow handle; a drag move
     expect(onShapeChange).not.toHaveBeenCalled();
     await act(async () => corner.onPanResponderRelease!({} as never, { dx: -40, dy: -30 } as never));
     expect(onShapeChange).toHaveBeenCalledTimes(1);
-    expect(onShapeChange.mock.calls[0][1].corners).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.75, y: 1 }, { x: 0, y: 1 }]);
+    const shaped = { ...panels[0], ...onShapeChange.mock.calls[0][1] };
+    expect([shaped.corners[0], shaped.corners[1], shaped.corners[3]]).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 1 }]);
+    const points = worldCorners(panelRenderedFrame(shaped));
+    expect(Math.atan2(points[2].x - points[1].x, points[2].y - points[1].y) * 180 / Math.PI).toBeCloseTo(-15);
     expect(renderer.root.findByType(PencilKitView)).toBe(ink);
     expect(ink.props.drawingData).toBe('ink-a');
   } finally {
@@ -393,7 +436,9 @@ test('the right-hand panel places both resize and reshape controls on its left s
       sheetBounds={{ width: 900, height: 1200 }} onResize={onResize} onShapeChange={onShapeChange}
       onSelect={jest.fn()} onModeChange={jest.fn()} onMove={jest.fn()} onDelete={jest.fn()} onDoubleTap={jest.fn()} />); });
     const circle = renderer.root.findAllByProps({ accessibilityLabel: 'Resize or reshape panel' })[0];
-    expect(StyleSheet.flatten(circle.props.style).left).toBe(-14);
+    // Controls sit above the outline in sheet coordinates, with the same
+    // visible corner position they had inside the panel's 2-point border.
+    expect(StyleSheet.flatten(circle.props.style).left).toBe(right.x + 2 - 14);
     const resize = responder.mock.calls[1][0];
     await act(async () => {
       resize.onPanResponderGrant!({} as never, {} as never);
@@ -420,6 +465,27 @@ test('the right-hand panel places both resize and reshape controls on its left s
     });
     expect(onShapeChange).toHaveBeenCalledTimes(1);
     expect(onShapeChange.mock.calls[0][1].corners).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0.2, y: 1 }]);
+  } finally {
+    if (renderer) { await act(async () => renderer.unmount()); }
+    responder.mockRestore();
+  }
+});
+
+test('a first-panel drag previews and commits both canvas edge snaps without changing vertical placement', async () => {
+  const responder = jest.spyOn(PanResponder, 'create');
+  const onAddPanel = jest.fn();
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = ReactTestRenderer.create(<Workspace {...props} panels={[]} onAddPanel={onAddPanel} />); });
+    const gesture = responder.mock.calls[0][0];
+    await act(async () => gesture.onPanResponderGrant!({ nativeEvent: { locationX: 22, locationY: 100 } } as never, {} as never));
+    await act(async () => gesture.onPanResponderMove!({ nativeEvent: { locationX: 878, locationY: 300 } } as never, {} as never));
+    const preview = renderer.root.findAllByProps({ testID: 'panel-creation-preview' })[0].findAllByType(Polygon)[0].props.points;
+    expect(preview).toBe('12,100 888,100 888,300 12,300');
+    expect(onAddPanel).not.toHaveBeenCalled();
+    await act(async () => gesture.onPanResponderRelease!({} as never, {} as never));
+    expect(onAddPanel).toHaveBeenCalledTimes(1);
+    expect(onAddPanel).toHaveBeenCalledWith({ x: 12, y: 100, width: 876, height: 200 });
   } finally {
     if (renderer) { await act(async () => renderer.unmount()); }
     responder.mockRestore();

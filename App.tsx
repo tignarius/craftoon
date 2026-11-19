@@ -72,6 +72,13 @@ function CraftoonApp(): React.JSX.Element {
   const activePageId = useRef(currentPage.id);
   activePageId.current = currentPage.id;
   const [editingTracingPanelId, setEditingTracingPanelId] = useState<string | null>(null);
+  const tracingUpdateQueue = useRef<Promise<void>>(Promise.resolve());
+  const tracingUpdateWorker = useRef<(id: string, image: TracingImage | undefined) => Promise<void>>(async () => {});
+  const appMounted = useRef(true);
+  useEffect(() => { appMounted.current = true; return () => { appMounted.current = false; }; }, []);
+  useEffect(() => {
+    setEditingTracingPanelId(id => id && panelModes[id] !== 'draw' ? null : id);
+  }, [panelModes]);
   const [importingTracingImage, setImportingTracingImage] = useState(false);
   const importingTracingRef = useRef(false);
   useEffect(() => { setEditingTracingPanelId(null); }, [currentPage.id, currentScreen, infoOpen]);
@@ -124,6 +131,8 @@ function CraftoonApp(): React.JSX.Element {
   };
   const [history, setHistory] = useState<Snapshot[]>([]);
   const [historyStep, setHistoryStep] = useState(-1);
+  const historyState = useRef({ entries: history, step: historyStep });
+  historyState.current = { entries: history, step: historyStep };
   useEffect(() => {
     const subscription = AppState.addEventListener('memoryWarning', () => {
       const retained = history.slice(Math.max(0, historyStep - 1), historyStep + 1);
@@ -148,10 +157,14 @@ function CraftoonApp(): React.JSX.Element {
     pages: items, pageIndex, storyId, title: storyTitle, saved: hasSavedStoryRef.current,
   });
   const recordChange = (next: Snapshot, previous = snapshot()) => {
-    const past = historyStep < 0 ? [previous] : history.slice(0, historyStep + 1);
+    // Queued image updates can finish in one React batch. Preserve each Undo
+    // step rather than reading the history from an earlier render.
+    const latest = historyState.current;
+    const past = latest.step < 0 ? [previous] : latest.entries.slice(0, latest.step + 1);
     // Refresh the current entry with captured ink and the latest viewport.
     past[past.length - 1] = previous;
     const updated = boundHistory([...past, next]);
+    historyState.current = { entries: updated, step: updated.length - 1 };
     setHistory(updated);
     setHistoryStep(updated.length - 1);
     editRevisionRef.current += 1;
@@ -473,8 +486,7 @@ function CraftoonApp(): React.JSX.Element {
         ? error.message : 'This photo could not be loaded. Please try selecting it again.');
     } finally { importingTracingRef.current = false; setImportingTracingImage(false); }
   };
-  const handleTracingImageChange = async (panelId: string, tracingImage: TracingImage | undefined) => {
-    if (savingRef.current) { return; }
+  const applyTracingImageChange = async (panelId: string, tracingImage: TracingImage | undefined) => {
     savingRef.current = true;
     const targetId = currentPage.id;
     try {
@@ -483,13 +495,30 @@ function CraftoonApp(): React.JSX.Element {
       const captured = await storyLibrary.capturePages(latestPages.current);
       if (targetId !== activePageId.current) { return; }
       if (!captured.find(page => page.id === targetId)?.panels.some(panel => panel.id === panelId)) { return; }
-      changePages(captured.map(page => page.id === targetId ? { ...page,
+      const updated = captured.map(page => page.id === targetId ? { ...page,
         panels: page.panels.map(panel => panel.id === panelId ? { ...panel, tracingImage } : panel),
-      } : page), currentPageIndex, captured);
+      } : page);
+      changePages(updated, currentPageIndex, captured);
+      latestPages.current = updated;
       if (!tracingImage) { setEditingTracingPanelId(null); }
     } catch {
       Alert.alert('Could not update reference image', 'Your drawing is preserved. Please try again.');
     } finally { savingRef.current = false; }
+  };
+  tracingUpdateWorker.current = applyTracingImageChange;
+  const handleTracingImageChange = (panelId: string, tracingImage: TracingImage | undefined) => {
+    const targetId = currentPage.id;
+    const operation = tracingUpdateQueue.current.then(async () => {
+      // Reference visibility must not be silently dropped during another
+      // capture/autosave. Serialize updates and use the newest render context.
+      while (appMounted.current && targetId === activePageId.current && savingRef.current) {
+        await new Promise<void>(resolve => setTimeout(resolve, 16));
+      }
+      if (!appMounted.current || targetId !== activePageId.current) { return; }
+      await tracingUpdateWorker.current(panelId, tracingImage);
+    });
+    tracingUpdateQueue.current = operation.catch(() => {});
+    return operation;
   };
   const handleTracingEditingChange = (panelId: string, editing: boolean) => {
     setPanelModes({ [panelId]: 'draw' });

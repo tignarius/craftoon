@@ -1,13 +1,21 @@
 import type { ComicPanel, PanelPoint } from '../types/comic';
 import { fitPanelBesideNeighbors, panelsCollide, worldCorners, panelRenderedFrame } from './panelGeometry';
-import { PANEL_CLOSE_GAP, PANEL_PADDING } from './panelMetrics';
+import { PANEL_CLOSE_GAP, PANEL_PADDING, SNAP_THRESHOLD } from './panelMetrics';
 
 type Draft = Pick<ComicPanel, 'x' | 'y' | 'width' | 'height' | 'corners'>;
 const clamp = (n: number, max: number) => Math.max(PANEL_PADDING, Math.min(max - PANEL_PADDING, n));
 
+export function snapCanvasEdgeX(value: number, width: number): number {
+  const x = clamp(value, width), right = Math.max(PANEL_PADDING, width - PANEL_PADDING);
+  if (x - PANEL_PADDING <= SNAP_THRESHOLD) { return PANEL_PADDING; }
+  if (right - x <= SNAP_THRESHOLD) { return right; }
+  return x;
+}
+
 export function createPanelInFreeSpace(start: PanelPoint, pointer: PanelPoint, panels: ComicPanel[], bounds: { width: number; height: number }): Draft | null {
-  const anchor = { x: clamp(start.x, bounds.width), y: clamp(start.y, bounds.height) };
-  let endX = clamp(pointer.x, bounds.width), endY = clamp(pointer.y, bounds.height);
+  const firstPanel = panels.length === 0;
+  const anchor = { x: firstPanel ? snapCanvasEdgeX(start.x, bounds.width) : clamp(start.x, bounds.width), y: clamp(start.y, bounds.height) };
+  let endX = firstPanel ? snapCanvasEdgeX(pointer.x, bounds.width) : clamp(pointer.x, bounds.width), endY = clamp(pointer.y, bounds.height);
   const directionX = Math.sign(endX - anchor.x), directionY = Math.sign(endY - anchor.y);
   for (const panel of panels) {
     // Hit-test the visible polygon, not its retained ink frame. At a narrow

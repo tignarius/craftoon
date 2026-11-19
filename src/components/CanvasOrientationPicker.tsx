@@ -1,5 +1,5 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import Svg, { Defs, G, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { CanvasOrientation } from '../utils/canvasFormat';
 
@@ -79,21 +79,33 @@ export function CanvasOrientationPicker({ visible, anchor, placement = 'adaptive
   }, [remeasure]);
   const ready = !anchor?.measure || (measured?.source === anchor && measured.width === width && measured.height === height);
   const resolved = measured && measured.source === anchor ? measured.rect : anchor;
+  const horizontal = width > height;
+  const reveal = useRef(new Animated.Value(0)).current;
+  const slide = useMemo(() => reveal.interpolate({ inputRange: [0, 1], outputRange: [horizontal ? 12 : -12, 0] }), [horizontal, reveal]);
+  useEffect(() => {
+    reveal.setValue(0);
+    if (!visible || !ready) { return; }
+    const animation = Animated.timing(reveal, { toValue: 1, duration: 200,
+      easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    animation.start();
+    return () => animation.stop();
+  }, [visible, ready, horizontal, reveal]);
   if (!visible) { return null; }
   const center = resolved ? resolved.x + resolved.width / 2 : 80;
   const landscape = width > height && placement !== 'below';
   const desiredLeft = landscape && resolved ? resolved.x - 168 - 8 : center - 84;
   const desiredTop = landscape && resolved
     ? resolved.y + (resolved.height - cardHeight) / 2
-    : resolved ? resolved.y + resolved.height + 8 : 100;
+    : (resolved ? resolved.y + resolved.height + 8 : 100) + (placement === 'below' ? 6 : 0);
   const left = Math.max(12, Math.min(width - 180, desiredLeft));
   const top = Math.max(12, Math.min(height - cardHeight - 12, desiredTop));
   return <View style={styles.overlay} accessibilityViewIsModal onLayout={remeasure}>
     <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button"
       accessibilityLabel="Cancel canvas selection" onPress={onCancel} />
-    <View testID="canvas-orientation-card" pointerEvents={ready ? 'auto' : 'none'} accessibilityElementsHidden={!ready}
+    <Animated.View testID="canvas-orientation-card" pointerEvents={ready ? 'auto' : 'none'} accessibilityElementsHidden={!ready}
       onLayout={event => { const next = event.nativeEvent.layout.height; if (next > 0) { setCardHeight(previous => previous === next ? previous : next); } }}
-      style={[styles.card, { left, top, opacity: ready ? 1 : 0 }]}>
+      style={[styles.card, { left, top, opacity: ready ? 1 : 0,
+        transform: [horizontal ? { translateX: slide } : { translateY: slide }] }]}>
       <View style={styles.choices}>
         {(['portrait', 'landscape'] as const).map(orientation => <TouchableOpacity key={orientation}
           accessibilityRole="button" accessibilityLabel={orientation === 'portrait' ? 'Portrait canvas' : 'Landscape canvas'}
@@ -102,13 +114,13 @@ export function CanvasOrientationPicker({ visible, anchor, placement = 'adaptive
           <FormatPicture orientation={orientation} />
         </TouchableOpacity>)}
       </View>
-    </View>
+    </Animated.View>
   </View>;
 }
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 1000 },
-  card: { position: 'absolute', width: 168, backgroundColor: '#FFFFFF', borderRadius: 14,
-    padding: 12, borderWidth: StyleSheet.hairlineWidth, borderColor: '#E2E8F0' },
+  card: { position: 'absolute', width: 168, backgroundColor: '#F3F4F6', borderRadius: 14,
+    paddingHorizontal: 12, paddingVertical: 12 * 0.85, borderWidth: StyleSheet.hairlineWidth, borderColor: '#D1D5DB' },
   choices: { flexDirection: 'row', justifyContent: 'center', gap: 12 },
   choice: { borderRadius: 10, flex: 1, alignItems: 'center', paddingVertical: 4 },
 });

@@ -137,6 +137,7 @@ export const Panel: React.FC<PanelProps> = ({
   useEffect(() => { setTracingPreview(null); }, [panel.tracingImage, tracingEditing]);
   const reference = tracingPreview ?? panel.tracingImage;
   const referenceVisible = !!reference && reference.visible !== false;
+  const referenceRenderScale = focused ? Math.max(1, canvasScale) : 1;
   const scaleRef = useRef(canvasScale);
   scaleRef.current = canvasScale;
   const modeRef = useRef(mode);
@@ -320,6 +321,7 @@ export const Panel: React.FC<PanelProps> = ({
   const styleConfig = MODE_STYLE[mode ?? 'null'];
   const isDraw = mode === 'draw';
   const isDrawingOrEditing = isDraw;
+  const editingReference = isDraw && tracingEditing;
   // Render a focused outline at final screen size, outside the panel's
   // transformed subtree. Crop to visible vertices rather than the retained
   // (potentially much larger) ink frame.
@@ -368,9 +370,12 @@ export const Panel: React.FC<PanelProps> = ({
     width={outlineWidth} height={outlineHeight} viewBox={`0 0 ${outlineWidth} ${outlineHeight}`}>
     <Polygon testID="panel-paper" points={focusedOutline.points} fill={transparentBackground ? 'none' : '#FFFFFF'} />
   </Svg>;
+  // Composite the vector outline above both toolbars' white halos. Keep it
+  // outside the ink container so a sibling image toolbar cannot wash it out.
   const panelOutline = (
     <Svg pointerEvents="none" testID="panel-outline-layer"
-      style={[{ position: 'absolute', left: -2, top: -2, zIndex: focused ? stackOrder + 1 : 2 }, focusedVectorStyle]}
+      style={[{ position: 'absolute', left: displayPosition?.x ?? panel.x, top: displayPosition?.y ?? panel.y,
+        opacity: hidden ? 0 : 1, zIndex: 85, transform: [{ scale: displayScale }] }, focusedVectorStyle]}
       width={outlineWidth} height={outlineHeight} viewBox={`0 0 ${outlineWidth} ${outlineHeight}`}>
       {borderStyle !== 'none' && <Polygon testID="panel-border" points={focusedOutline?.points ?? shapePoints} fill="none"
         stroke={mode ? styleConfig.border : panel.borderColor ?? '#1E293B'}
@@ -450,6 +455,19 @@ export const Panel: React.FC<PanelProps> = ({
         </View>
   ) : null;
 
+  const referenceControls = isDraw && panel.tracingImage && reference && onTracingImageChange && onTracingEditingChange && <View
+      testID="panel-reference-overlay" pointerEvents={interactive && !hidden ? 'box-none' : 'none'}
+      accessibilityElementsHidden={hidden} importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      style={{ position: 'absolute', overflow: 'visible', opacity: hidden ? 0 : 1, zIndex: focused ? 60 : stackOrder,
+        left: (displayPosition?.x ?? panel.x) + panel.width * (1 - displayScale) / 2 + 2 * displayScale,
+        top: (displayPosition?.y ?? panel.y) + panel.height * (1 - displayScale) / 2 + 2 * displayScale,
+        width: (panel.width - 4) * displayScale, height: (panel.height - 4) * displayScale }}>
+      <TracingImageControls image={reference} editing={tracingEditing} bounds={{ width: panel.width - 4,height: panel.height - 4 }}
+        canvasScale={canvasScale} onPreview={setTracingPreview} corners={corners} focused={focused} displayScale={displayScale}
+        onEditingChange={editing => onTracingEditingChange(panel.id, editing)}
+        onCommit={image => onTracingImageChange(panel.id, image)} />
+    </View>;
+
   return (
     <>
     {focusedPaper}
@@ -483,15 +501,19 @@ export const Panel: React.FC<PanelProps> = ({
         viewBox={`0 0 ${panel.width} ${panel.height}`}>
         <Polygon testID="panel-paper" points={shapePoints} fill={transparentBackground ? 'none' : '#FFFFFF'} />
       </Svg>}
-      <PanelSurface pointerEvents="box-none" clipContent={referenceVisible} polygonPoints={corners} style={styles.canvasWrapper}>
-        {referenceVisible && reference && <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-          <Image testID={`panel-reference-image-${panel.id}`} source={{ uri: reference.uri }} resizeMode="stretch"
-            style={{ position: 'absolute',left: reference.x,top: reference.y,width: reference.width,height: reference.height,
-              opacity: reference.opacity,transform: [{ rotate: `${reference.rotation}deg` }] }} />
+      <PanelSurface pointerEvents="box-none" clipContent={!!reference} polygonPoints={corners} style={styles.canvasWrapper}>
+        {reference && <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+          <View testID={`panel-reference-image-frame-${panel.id}`} style={{ position: 'absolute', left: reference.x, top: reference.y,
+            width: reference.width, height: reference.height, opacity: referenceVisible ? reference.opacity : 0, transform: [{ rotate: `${reference.rotation}deg` }] }}>
+            <Image testID={`panel-reference-image-${panel.id}`} source={{ uri: reference.uri }} resizeMode="stretch"
+              style={{ width: reference.width * referenceRenderScale,
+                height: reference.height * referenceRenderScale,
+                transformOrigin: 'top left', transform: [{ scale: 1 / referenceRenderScale }] }} />
+          </View>
         </View>}
         <PencilKitView
           style={StyleSheet.absoluteFill}
-          isDrawingActive={isDrawingOrEditing && !tracingEditing}
+          isDrawingActive={isDrawingOrEditing && !editingReference}
           drawingTool="pen"
           panelId={panel.id}
           selectionTimestamp={selectionTimestamp}
@@ -507,36 +529,31 @@ export const Panel: React.FC<PanelProps> = ({
           }}
         />
 
-        {!isDrawingOrEditing && !tracingEditing && <View style={StyleSheet.absoluteFill} {...movePR.panHandlers} />}
+        {!isDrawingOrEditing && !editingReference && <View style={StyleSheet.absoluteFill} {...movePR.panHandlers} />}
       </PanelSurface>
-
-      {!focused && panelOutline}
-
-      <View pointerEvents="box-none" style={styles.referenceControls}>
-        {panel.tracingImage && reference && onTracingImageChange && onTracingEditingChange && <TracingImageControls
-          image={reference} editing={tracingEditing} bounds={{ width: panel.width - 4,height: panel.height - 4 }}
-          canvasScale={canvasScale} onPreview={setTracingPreview}
-          onEditingChange={editing => onTracingEditingChange(panel.id, editing)}
-          onCommit={image => onTracingImageChange(panel.id, image)} />}
-      </View>
 
       {!focused && panelControls}
 
+    </View>
+    {panelOutline}
+    <View pointerEvents={interactive && !hidden ? 'box-none' : 'none'}
+      accessibilityElementsHidden={hidden} importantForAccessibility={hidden ? 'no-hide-descendants' : 'auto'}
+      style={[StyleSheet.absoluteFill, { zIndex: 90, opacity: hidden ? 0 : 1 }]}>
       {/* 4. 리사이즈 핸들 */}
-      {mode === 'layout' && !tracingEditing && !reshaping && (
-        <View accessibilityRole="button" accessibilityLabel="Resize or reshape panel" onAccessibilityTap={toggleReshaping} accessibilityHint="Drag to resize. Tap to reshape this corner." style={[styles.resizeHandle, { bottom: undefined, right: undefined, left: corners[handleIndex].x * (panel.width - 4) - 14, top: corners[handleIndex].y * (panel.height - 4) - 14 }]} {...resizePR.panHandlers}>
+      {mode === 'layout' && !editingReference && !reshaping && (
+        <View accessibilityRole="button" accessibilityLabel="Resize or reshape panel" onAccessibilityTap={toggleReshaping} accessibilityHint="Drag to resize. Tap to reshape this corner." style={[styles.resizeHandle, { bottom: undefined, right: undefined, left: panel.x + 2 + corners[handleIndex].x * (panel.width - 4) - 14, top: panel.y + 2 + corners[handleIndex].y * (panel.height - 4) - 14 }]} {...resizePR.panHandlers}>
           <View style={styles.resizeKnob} />
         </View>
       )}
-      {mode === 'layout' && !tracingEditing && reshaping && <PanelCornerHandle
-        panel={{ ...panel, corners }} side={handleSide} scale={canvasScale} otherPanels={otherPanels} sheetBounds={sheetBounds}
+      {mode === 'layout' && !editingReference && reshaping && <PanelCornerHandle
+        panel={{ ...panel, corners }} offset={{ x: panel.x + 2, y: panel.y + 2 }} side={handleSide} scale={canvasScale} otherPanels={otherPanels} sheetBounds={sheetBounds}
         onPreview={setShapePreview} onCommit={value => {
           Promise.resolve(onShapeChange?.(panel.id, value))
             .finally(() => setShapePreview(current => current === value ? null : current));
         }} onClose={() => setReshaping(false)} />}
     </View>
-    {focused && panelOutline}
     {focused && panelControls}
+    {referenceControls}
     </>
   );
 };
@@ -546,7 +563,6 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: '#93B4ED', padding: 4, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 6, shadowOffset: { width: 0, height: 2 } },
   borderOption: { alignItems: 'center', justifyContent: 'center', padding: 5, borderRadius: 8 },
   importing: { opacity: 0.5 },
-  referenceControls: { position: 'absolute',top: 2,left: 2,right: 2,bottom: 2,overflow: 'hidden',zIndex: 45 },
   transparentPanel: { backgroundColor: 'transparent', shadowOpacity: 0 },
   transparentCanvas: { backgroundColor: 'transparent' },
   panelContainer: {
@@ -585,8 +601,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderColor: '#94A3B8',
     borderWidth: 1.25,
-    // A soft white halo separates controls from ink without blurring the art
-    // or adding an overlay that could intercept drawing gestures.
     boxShadow: [
       { offsetX: 0, offsetY: 2, blurRadius: 3, color: 'rgba(0,0,0,0.28)' },
       { offsetX: 0, offsetY: 0, blurRadius: 9, spreadDistance: 4, color: 'rgba(255,255,255,0.95)' },
@@ -603,7 +617,7 @@ const styles = StyleSheet.create({
     height: RESIZE_HANDLE_SIZE,
     justifyContent: 'center',
     alignItems: 'center',
-    zIndex: 40,
+    zIndex: 90,
   },
   resizeKnob: {
     width: 14 * PANEL_ICON_SCALE * 1.2,

@@ -231,11 +231,41 @@ export function snapPanelShape(panel: ComicPanel, side: Side, dx: number, others
 
 
 export type ShapeUpdate = Pick<ComicPanel, 'x' | 'width' | 'height' | 'corners' | 'shapeRevision' | 'resizeInk' | 'warpInk' | 'tracingImage'>;
+
+// Use the visible edge's angle from vertical, including the inset outline and
+// any reframing when a corner extends beyond its original ink frame.
+function cornerAngleTarget(panel: ComicPanel, side: Side, x: number): number | undefined {
+  const points = worldCorners(panel), top = points[side === 'left' ? 0 : 1], bottom = points[side === 'left' ? 3 : 2];
+  if (panel.width <= 4 || panel.height <= 4) { return undefined; }
+  const dy = (bottom.y - top.y) * (1 - 4 / panel.height);
+  if (dy <= 0.001) { return undefined; }
+  const angleAt = (value: number) => {
+    const width = Math.max(panel.x + panel.width, value) - Math.min(panel.x, value);
+    return Math.atan2((value - top.x) * (1 - 4 / width), dy) * 180 / Math.PI;
+  };
+  const angle = angleAt(x), target = Math.round(angle / 15) * 15;
+  // A narrow capture band lets continued dragging leave the snap naturally.
+  if (Math.abs(target) >= 90 || Math.abs(angle - target) > 2) { return undefined; }
+  const run = Math.tan(target * Math.PI / 180) * dy;
+  const a = top.x + run, b = top.x + run / (1 - 4 / panel.width);
+  let low = Math.min(a, b) - 0.001, high = Math.max(a, b) + 0.001;
+  for (let i = 0; i < 36; i++) {
+    const mid = (low + high) / 2;
+    if (angleAt(mid) < target) { low = mid; } else { high = mid; }
+  }
+  return (low + high) / 2;
+}
+
 export function reshapePanelPoint(panel: ComicPanel, side: Side, dx: number, others: ComicPanel[] = [], bounds?: Bounds): ShapeUpdate {
   const original = worldCorners(panel), index = side === 'left' ? 3 : 2;
   const point = original[index];
   let targetX = Math.max(PANEL_PADDING, Math.min(bounds ? bounds.width - PANEL_PADDING : Infinity, point.x + dx));
-  const snap = closest(targetX, pointTargets({ x: targetX, y: point.y }, 'x', others, side, bounds));
+  const rawX = targetX;
+  const angleTarget = dx === 0 ? undefined : cornerAngleTarget(panel, side, rawX);
+  const angleAllowed = angleTarget !== undefined && angleTarget >= PANEL_PADDING
+    && (!bounds || angleTarget <= bounds.width - PANEL_PADDING);
+  const alignmentTargets = pointTargets({ x: rawX, y: point.y }, 'x', others, side, bounds);
+  const snap = closest(rawX, [...alignmentTargets, ...(angleAllowed ? [{ value: angleTarget, range: Infinity }] : [])]);
   if (dx !== 0 && snap) { targetX = snap.value; }
   const make = (fraction: number): ShapeUpdate => {
     const world = original.map(p => ({ ...p }));
@@ -257,7 +287,12 @@ export function reshapePanelPoint(panel: ComicPanel, side: Side, dx: number, oth
       && !others.some(other => !initiallyOverlapping.has(other.id)
         && panelsCollide(candidate, other, 0));
   };
-  const result = make(1);
+  let result = make(1);
+  if (!valid(result) && angleAllowed && snap?.value === angleTarget) {
+    // An angle hint must never pull a valid freehand position into another box.
+    targetX = rawX;
+    result = make(1);
+  }
   if (valid(result)) { return result; }
   let low = 0, high = 1;
   for (let i = 0; i < 28; i++) { const mid = (low + high) / 2; if (valid(make(mid))) { low = mid; } else { high = mid; } }

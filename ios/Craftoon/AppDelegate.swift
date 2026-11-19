@@ -70,7 +70,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     guard let windowScene = scene as? UIWindowScene else { return }
 
     let appDelegate = UIApplication.shared.delegate as! AppDelegate
-    let newWindow = UIWindow(windowScene: windowScene)
+    let newWindow: UIWindow = CraftoonStrokeDiagnostics.enabled
+      ? CraftoonStrokeDiagnosticWindow(windowScene: windowScene) : CraftoonInputWindow(windowScene: windowScene)
     self.window = newWindow
     appDelegate.window = newWindow
 
@@ -86,6 +87,30 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       in: newWindow,
       launchOptions: nil
     )
+  }
+}
+
+// A Pencil contact that restarts just outside the selected panel must belong
+// to its canvas from the beginning. UIKit cannot transfer it on re-entry.
+class CraftoonInputWindow: UIWindow {
+  override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+    let normal = super.hitTest(point, with: event)
+    guard event?.allTouches?.contains(where: { touch in
+      guard touch.type == .pencil, touch.phase == .began else { return false }
+      let location = touch.location(in: self)
+      return hypot(location.x - point.x, location.y - point.y) < 1
+    }) == true,
+      rootViewController?.presentedViewController == nil else { return normal }
+    return RNPencilKitView.pencilMarginTarget(at: point, in: self, normalTarget: normal, event: event) ?? normal
+  }
+}
+
+// Launch-only observation, with no additional gesture recognizers.
+private final class CraftoonStrokeDiagnosticWindow: CraftoonInputWindow {
+  override func sendEvent(_ event: UIEvent) {
+    RNPencilKitView.recordStrokeEvent(event, stage: "before_dispatch")
+    super.sendEvent(event)
+    RNPencilKitView.recordStrokeEvent(event, stage: "after_dispatch")
   }
 }
 
