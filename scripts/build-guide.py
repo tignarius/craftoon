@@ -369,7 +369,7 @@ def mode_card(x,y,width,height,mode,number,title,outline=None):
     modes={
         'canvas':('square-pen','#EA8A23','#FFF8EF','#F1D8BC','#FFF5E8'),
         'library':('library-big','#8B5CF6','#F6F1FF','#DACAF4','#F3EDFF'),
-        'reader':('glasses','#0D9488','#EDF9F5','#BBDFD5','#E8FAF6'),
+        'reader':('glasses','#0D9488','#EDF4FF','#BFD3F2','#E6EFFF'),
     }
     name,color,fill,border,badge_fill=modes[mode]
     if outline: rounded_region(outline,fill,border)
@@ -407,8 +407,8 @@ def portrait():
     # Three tinted mode cards. Each leading mode symbol is exactly 20 pt,
     # matching the app control symbols in the toolbar illustrations below.
     mode_card(22,305,551,470,'canvas','01','CANVAS')
-    mode_card(22,25,266,272,'library','02','LIBRARY')
-    mode_card(296,103,277,194,'reader','03','READ')
+    mode_card(22,25,272,272,'library','02','LIBRARY')
+    mode_card(304,103,269,194,'reader','03','READ')
 
     targets=portrait_header('canvas',34,667,527)
     for target,label in list(zip(targets,['Canvas mode','Library','Read','New','Save','Templates','Auto arrange','Undo','Redo','Pages']))[1:]:
@@ -441,16 +441,16 @@ def portrait():
 
     c.saveState(); c.translate(0,-112)
     # Real Library header, with the selected comic alongside compact actions.
-    targets=portrait_header('library',34,291,242)
+    targets=portrait_header('library',42,291,240)
     for target,label in list(zip(targets,['Library mode','Canvas','Email','Print']))[1:]:
         centered(target[0],357,label,7.3,INK,'Helvetica-Bold')
         solid_arrow((target[0],347),target,gap=18)
     badge(targets[2][0]-13,292)
     badge(targets[3][0]-13,292)
-    selected_comic(34,147,76)
-    actions=[(153,'square-pen','Canvas','#EA8A23'),
-             (197,'glasses','Read','#0D9488'),
-             (241,'trash-2','Delete','#DC2626')]
+    selected_comic(42,147,76)
+    actions=[(161,'square-pen','Canvas','#EA8A23'),
+             (205,'glasses','Read','#0D9488'),
+             (249,'trash-2','Delete','#DC2626')]
     for cx,name,title,color in actions:
         if name=='trash-2': draw_box(c,cx-15,213-15,30,30,'#FEF2F2',r=9)
         draw_icon(c,name,cx,213,20,color)
@@ -459,22 +459,22 @@ def portrait():
     centered(sum(item[0] for item in actions)/len(actions),181,'Click a comic to show its actions.',8,GRAY)
 
     c.saveState(); c.translate(0,78)
-    targets=portrait_header('reader',308,215,253)
+    targets=portrait_header('reader',316,215,235)
     for target,label in list(zip(targets,['Read mode','Library','Canvas','Email','Print']))[1:]:
         centered(target[0],280,label,6.8,INK,'Helvetica-Bold')
         solid_arrow((target[0],270),target,gap=18)
     badge(targets[3][0]-13,216)
     badge(targets[4][0]-13,216)
-    text(308,181,'Swipe to turn pages.',8,GRAY)
+    text(316,181,'Swipe to turn pages.',8,GRAY)
     c.restoreState()
     c.restoreState()
 
     # Benefits occupy the space beneath the raised Read card.
-    draw_box(c,296,25,277,70,'#F8FAFC','#DFE6EE',r=8)
-    badge(308,71,'FREE')
-    lines(343,78,['Up to 4 pages per comic','Save 1 comic at a time'],7.3,12)
-    badge(308,38)
-    lines(343,45,['Unlimited pages per comic','Save unlimited comics | Email & Print'],7.3,12)
+    draw_box(c,304,25,269,70,'#F8FAFC','#DFE6EE',r=8)
+    badge(316,71,'FREE')
+    lines(351,78,['Up to 4 pages per comic','Save 1 comic at a time'],7.3,12)
+    badge(316,38)
+    lines(351,45,['Unlimited pages per comic','Save unlimited comics | Email & Print'],7.3,12)
     c.restoreState()
     centered(595.28/2,13,'Created by Squareplayer',6.5,GRAY)
 
