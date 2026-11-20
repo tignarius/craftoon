@@ -6,6 +6,7 @@ import {
   Image,
   Pressable,
   StatusBar,
+  Platform,
   StyleSheet,
   TouchableOpacity,
   useWindowDimensions,
@@ -149,7 +150,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
 
   return (
     <View style={styles.root}>
-      <StatusBar hidden />
+      {Platform.OS !== 'ios' && <StatusBar hidden />}
       <ScreenHeader mode="library" onPrint={printSelected} printLabel="Print selected comic"
         printDisabled={!selectedId || openingId !== null || deletingId !== null || emailing} printing={printing}
         onEmail={emailSelected} emailing={emailing}

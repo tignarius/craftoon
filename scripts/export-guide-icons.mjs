@@ -4,7 +4,7 @@ import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const names = ['square-pen','grid-2x2','file','library-big','download','glasses',
   'undo-2','redo-2','pen','image','move','trash-2','plus','eye-off','rotate-cw',
-  'maximize-2','blend','check','settings-2','mail','printer','eraser','lasso-select','palette'];
+  'maximize-2','blend','check','settings-2','mail','printer','eraser','lasso-select','palette','zoom-in','zoom-out','eye'];
 const result = {};
 for (const name of names) {
   const source = fs.readFileSync(path.join(root,'node_modules/lucide-react-native/dist/esm/icons',`${name}.mjs`),'utf8');

@@ -12,12 +12,20 @@ let renderer: ReactTestRenderer.ReactTestRenderer | undefined;
 let viewport = { width: 768, height: 1024, scale: 1, fontScale: 1 };
 let frames: Map<number, (timestamp: number) => void>;
 let nextFrame: number;
+let exits: Array<() => void>;
 const props = { onSelect: jest.fn(), onCancel: jest.fn() };
 const portrait = { x: 200, y: 600, width: 96, height: 96 };
 const landscape = { x: 480, y: 420, width: 84, height: 84 };
 beforeEach(() => {
   viewport = { width: 768, height: 1024, scale: 1, fontScale: 1 };
-  frames = new Map(); nextFrame = 0;
+  frames = new Map(); nextFrame = 0; exits = [];
+  jest.spyOn(RN.Animated, 'timing').mockImplementation((value, config) => {
+    let stopped = false;
+    return { start: callback => {
+      const finish = () => { if (!stopped) { (value as RN.Animated.Value).setValue(config.toValue as number); callback?.({ finished: true }); } };
+      if (config.toValue === 0) { exits.push(finish); } else { finish(); }
+    }, stop: () => { stopped = true; }, reset: jest.fn() };
+  });
   jest.spyOn(jest.requireActual<typeof import('react-native')>('react-native'), 'useWindowDimensions').mockImplementation(() => viewport);
   jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => { frames.set(++nextFrame, callback); return nextFrame; });
   jest.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(id => { frames.delete(id); });
@@ -30,18 +38,23 @@ const flushFrames = async () => {
   const callbacks = [...frames.values()]; frames.clear();
   await act(async () => callbacks.forEach(callback => callback(0)));
 };
-const card = () => RN.StyleSheet.flatten(renderer!.root.findByProps({ testID: 'canvas-orientation-card' }).props.style);
+const card = () => {
+  const style = RN.StyleSheet.flatten(renderer!.root.findByProps({ testID: 'canvas-orientation-card' }).props.style);
+  return { ...style, opacity: typeof style.opacity === 'number' ? style.opacity : style.opacity.__getValue() };
+};
+const finishExit = async () => { await act(async () => exits.splice(0).forEach(finish => finish())); };
 
 test.each(['adaptive', 'below'] as const)('the %s picker slides down in portrait and left in landscape', async placement => {
-  const animation = { start: jest.fn(), stop: jest.fn(), reset: jest.fn() };
-  const timing = jest.spyOn(RN.Animated, 'timing').mockReturnValue(animation);
+  const timing = RN.Animated.timing as jest.Mock;
   await act(async () => { renderer = ReactTestRenderer.create(<CanvasOrientationPicker {...props} visible placement={placement} anchor={portrait} />); });
-  expect(card().transform[0].translateY.__getValue()).toBe(-12);
+  expect(card().transform[0].translateY.__getValue()).toBe(0);
   expect(timing).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toValue: 1, duration: 200, useNativeDriver: true }));
   viewport = { ...viewport, width: 1024, height: 768 };
   await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible placement={placement} anchor={landscape} />));
-  expect(card().transform[0].translateX.__getValue()).toBe(12);
-  expect(animation.stop).toHaveBeenCalled();
+  expect(card().transform[0].translateY).toBeDefined();
+  expect(timing).toHaveBeenLastCalledWith(expect.anything(), expect.objectContaining({ toValue: 0, duration: 130 }));
+  await finishExit();
+  expect(card().transform[0].translateX).toBeDefined();
   await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible={false} placement={placement} anchor={landscape} />));
   expect(renderer!.root.findAllByProps({ testID: 'canvas-orientation-card' })).toHaveLength(0);
 });
@@ -55,9 +68,12 @@ test('an open orientation picker follows the live Canvas button after rotation a
   viewport = { ...viewport, width: 1024, height: 768 };
   position = landscape;
   await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible anchor={anchor} />));
-  // Do not show the old coordinates while the new native layout is measured.
-  expect(card().opacity).toBe(0);
+  // Keep the old geometry for the exit, even after new measurements arrive.
+  expect(card()).toMatchObject({ left: 164, top: 704 });
   await flushFrames();
+  expect(card()).toMatchObject({ left: 164, top: 704 });
+  expect(renderer!.root.findByProps({ testID: 'canvas-orientation-card' }).props.pointerEvents).toBe('none');
+  await finishExit();
   expect(card()).toMatchObject({ left: 304, top: 419, opacity: 1 });
   // A later safe-area/parent layout can move the button without changing dimensions.
   position = { ...landscape, y: 400 };
@@ -128,4 +144,38 @@ test('canvas New menu stays below its toolbar button in landscape and after rela
   await act(async () => overlay.props.onLayout());
   await flushFrames();
   expect(card()).toMatchObject({ left: 58, top: 102, opacity: 1 });
+});
+
+
+test('rapid rotations and dismissal cannot reopen a stale transition', async () => {
+  await act(async () => { renderer = ReactTestRenderer.create(<CanvasOrientationPicker {...props} visible anchor={portrait} />); });
+  viewport = { ...viewport, width: 1024, height: 768 };
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible anchor={landscape} />));
+  viewport = { ...viewport, width: 768, height: 1024 };
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible anchor={portrait} />));
+  await finishExit();
+  expect(card()).toMatchObject({ left: 164, top: 704 });
+  expect(card().transform[0].translateY).toBeDefined();
+  viewport = { ...viewport, width: 1024, height: 768 };
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible anchor={landscape} />));
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible={false} anchor={landscape} />));
+  await finishExit();
+  expect(renderer!.root.findAllByProps({ testID: 'canvas-orientation-card' })).toHaveLength(0);
+});
+
+test('the folded picker waits for a new native anchor before entering again', async () => {
+  const callbacks: Array<(rect: CanvasPickerAnchor) => void> = [];
+  const anchor = { ...portrait, measure: (done: (rect: CanvasPickerAnchor) => void) => callbacks.push(done) };
+  await act(async () => { renderer = ReactTestRenderer.create(<CanvasOrientationPicker {...props} visible anchor={anchor} />); });
+  await flushFrames();
+  await act(async () => callbacks[0](portrait));
+  viewport = { ...viewport, width: 1024, height: 768 };
+  await act(async () => renderer!.update(<CanvasOrientationPicker {...props} visible anchor={anchor} />));
+  await flushFrames();
+  await finishExit();
+  expect(card().opacity).toBe(0);
+  expect(renderer!.root.findByProps({ testID: 'canvas-orientation-card' }).props.pointerEvents).toBe('none');
+  await act(async () => callbacks[1](landscape));
+  expect(card()).toMatchObject({ left: 304, top: 419, opacity: 1 });
+  expect(card().transform[0].translateX).toBeDefined();
 });

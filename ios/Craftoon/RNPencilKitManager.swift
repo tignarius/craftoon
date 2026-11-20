@@ -250,7 +250,27 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     else if physicalMask != .all && !allowed.intersection(physicalMask).isEmpty { mask = physicalMask }
     else { mask = orientation == "landscape" ? .landscapeRight : .portrait }
     let requestedMask = orientation == "automatic" ? CraftoonOrientationState.physicalMask : mask
+    let previousMask = CraftoonOrientationState.mask
     CraftoonOrientationState.mask = mask
+    // Modern iPadOS otherwise rotates the window presentation even when the
+    // scene's paper orientation stays fixed. Unlock before changing formats;
+    // re-lock once the requested interface orientation has actually arrived.
+    CraftoonOrientationState.updateLockPreference(on: root)
+    // Splash/Library already follow the device. Do not restart an automatic
+    // rotation on initial layout or foregrounding. An explicit geometry
+    // request is only needed when leaving a previously locked page.
+    if orientation == "automatic", previousMask == .all {
+      if #available(iOS 16.0, *) { root.setNeedsUpdateOfSupportedInterfaceOrientations() }
+      resolve(nil)
+      return
+    }
+    if orientation != "automatic", currentMask == mask {
+      if #available(iOS 16.0, *) {
+        UIView.performWithoutAnimation { root.setNeedsUpdateOfSupportedInterfaceOrientations() }
+      }
+      resolve(nil)
+      return
+    }
     if orientation == "automatic" && requestedMask == .all {
       if #available(iOS 16.0, *) { root.setNeedsUpdateOfSupportedInterfaceOrientations() }
       resolve(nil)
@@ -263,6 +283,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
       finished = true
       timer?.invalidate()
       timer = nil
+      CraftoonOrientationState.updateLockPreference(on: root)
       if let error = error { reject("ORIENTATION_FAILED", "Could not rotate to the selected canvas.", error) }
       else { resolve(nil) }
     }
@@ -277,22 +298,26 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
       }
     }
     if #available(iOS 16.0, *) {
-      root.setNeedsUpdateOfSupportedInterfaceOrientations()
-      root.presentedViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-      scene.requestGeometryUpdate(.iOS(interfaceOrientations: requestedMask)) { error in
-        guard !finished else { return }
-        if Date().timeIntervalSince(requestedAt) < 3 {
-          // A freshly restored React view may still be completing its first
-          // layout/rotation transaction. Retry transient geometry refusals.
-          finished = true
-          timer?.invalidate()
-          timer = nil
-          DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            self.applyCanvasOrientation(orientation, generation: generation,
-              requestedAt: requestedAt, resolve: resolve, reject: reject)
-          }
-        } else { complete(error) }
+      let updateGeometry = {
+        root.setNeedsUpdateOfSupportedInterfaceOrientations()
+        root.presentedViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: requestedMask)) { error in
+          guard !finished else { return }
+          if Date().timeIntervalSince(requestedAt) < 3 {
+            // A freshly restored React view may still be completing its first
+            // layout/rotation transaction. Retry transient geometry refusals.
+            finished = true
+            timer?.invalidate()
+            timer = nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+              self.applyCanvasOrientation(orientation, generation: generation,
+                requestedAt: requestedAt, resolve: resolve, reject: reject)
+            }
+          } else { complete(error) }
+        }
       }
+      if orientation == "automatic" { updateGeometry() }
+      else { UIView.performWithoutAnimation(updateGeometry) }
     } else {
       // iOS 15: a public presentation API applies the preferred orientation.
       let rotation = CanvasRotationController(mask: requestedMask == .all ? .portrait : requestedMask)

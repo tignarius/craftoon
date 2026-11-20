@@ -20,6 +20,7 @@ OUT = ROOT / 'output/pdf'
 OUT.mkdir(parents=True, exist_ok=True)
 PREVIEW = ROOT / 'tmp/pdfs'
 PREVIEW.mkdir(parents=True, exist_ok=True)
+PAGE_SIZE = (595.28, 759.89)
 INK, GRAY, PURPLE, TEAL = '#17243B', '#536179', '#7C3AED', '#0D9488'
 c = None
 
@@ -233,30 +234,75 @@ def portrait_header(mode,x,y,width=535):
     return [(cx,cy) for cx in centers]
 
 
+def border_style_glyph(cx, cy, style='solid', size=19, color='#3B82F6'):
+    # Match PanelBorderIcon's rectangle, dash patterns and no-border slash.
+    c.saveState(); c.translate(cx-size/2,cy+size/2); c.scale(size/24,-size/24)
+    c.setStrokeColor(HexColor(color)); c.setLineWidth(1.8)
+    if style == 'dashed': c.setDash(5,3)
+    elif style in ('dotted','none'): c.setDash(1,3)
+    if style == 'dotted': c.setLineCap(1)
+    if style == 'none': c.setStrokeAlpha(.45)
+    c.roundRect(3,4,18,16,1,stroke=1,fill=0)
+    if style == 'none':
+        c.setDash(); c.setStrokeAlpha(1); c.setLineWidth(2); c.line(3,22,21,2)
+    c.restoreState()
+
+
+def reshape_glyph(cx,cy,size=19):
+    # Exact polygon and highlighted corner from PanelCornerHandle.tsx.
+    c.saveState(); c.translate(cx-size/2,cy+size/2); c.scale(size/28,-size/28)
+    p=c.beginPath(); p.moveTo(8,5); p.lineTo(20,5); p.lineTo(24,22); p.lineTo(4,22); p.close()
+    c.setFillColor(HexColor('#FFFFFF')); c.setStrokeColor(HexColor('#3B82F6')); c.setLineWidth(1.8)
+    c.drawPath(p,stroke=1,fill=1)
+    c.setFillColor(HexColor('#3B82F6')); c.setStrokeColor(HexColor('#FFFFFF')); c.setLineWidth(1.5)
+    c.circle(24,22,3,stroke=1,fill=1)
+    c.restoreState()
+
+
 def panel_top(x,y,width,mode):
-    """A crop of a panel's top edge, with its two real app control icons."""
+    """Current panel tool positions: mode and tools on left, Layout trash on right."""
     layout=mode=='layout'
-    border='#4ECDC4' if layout else '#F39746'
+    border='#3B82F6' if layout else '#F97316'
     draw_box(c,x,y,width,38,'#FAFCFE',r=3)
     c.setStrokeColor(HexColor(border)); c.setLineWidth(.9)
     p=c.beginPath(); p.moveTo(x,y); p.lineTo(x,y+38)
     p.lineTo(x+width,y+38); p.lineTo(x+width,y); c.drawPath(p)
     cy=y+21
-    centers=[x+23,x+width-23]
-    for i,cx in enumerate(centers):
-        if i==0:
-            name='move' if layout else 'pen'
-            color='#0D9488' if layout else '#EA8A23'
-            fill='#E8FAF6' if layout else '#FFF5E8'
-            edge='#A7E5DF' if layout else '#FED7AA'
-        else:
-            name='trash-2' if layout else 'image'
-            color='#EF4444' if layout else '#EA8A23'
-            fill='#FEE2E2' if layout else '#FFF5E8'
-            edge='#FECACA' if layout else '#FED7AA'
-        draw_box(c,cx-13,cy-13,26,26,fill,edge,r=13)
-        draw_icon(c,name,cx,cy,19,color)
+    centers=[x+23,x+63,x+width-23] if layout else [x+23,x+63,x+96]
+    names=['move','border','trash-2'] if layout else ['pen','zoom-in','image']
+    for cx,name in zip(centers,names):
+        color='#EF4444' if name=='trash-2' else border
+        draw_box(c,cx-11,cy-11,22,22,'#FFFFFF',color,r=11)
+        if name=='border': border_style_glyph(cx,cy,size=16,color=color)
+        else: draw_icon(c,name,cx,cy,16,color,2.2)
     return [(cx,cy) for cx in centers]
+
+
+def layout_extras():
+    # Keep the four alternatives together as a compact visual choice set.
+    for cx,style,label in zip([96,140,184,228],['solid','dashed','dotted','none'],['Solid','Dashed','Dotted','No border']):
+        border_style_glyph(cx,551,style,size=20)
+        centered(cx,531,label,7.2,GRAY)
+    text(40,505,'Resize / reshape',8.5,'#3B82F6','Helvetica-Bold')
+    c.setStrokeColor(HexColor('#3B82F6')); c.setLineWidth(1.2)
+    p=c.beginPath(); p.moveTo(48,493); p.lineTo(97,493); p.lineTo(116,465); p.lineTo(48,465); p.close()
+    c.drawPath(p,stroke=1,fill=0)
+    c.setFillColor(HexColor('#FFFFFF')); c.circle(116,465,5,stroke=1,fill=1)
+    solid_arrow((133,478),(157,478),'#3B82F6',gap=1)
+    reshape_glyph(181,478,27)
+    text(40,445,'Click the corner circle to switch tools.',7.5,GRAY)
+    text(40,432,'Drag the shape tool left or right to reshape.',7.5,GRAY)
+
+
+def panel_zoom():
+    draw_box(c,314,498,239,63,'#FFFBF5','#F0D2A9',r=7)
+    text(324,545,'Panel zoom',8.5,'#B76D20','Helvetica-Bold')
+    for cx,name in [(335,'zoom-in'),(379,'zoom-out')]:
+        draw_box(c,cx-12,522-12,24,24,'#FFFFFF','#F97316',r=12)
+        draw_icon(c,name,cx,522,17,'#F97316',2.2)
+    solid_arrow((351,522),(363,522),'#B76D20',gap=1)
+    text(401,531,'Enlarge only this panel.',7.5,GRAY)
+    text(401,517,'Click again to return.',7.5,GRAY)
 
 
 def rounded_region(points,fill,border,r=9):
@@ -314,16 +360,16 @@ def selected_comic(x,y,width):
 
 def portrait():
     c.saveState()
-    c.translate(0,-182)
+    c.translate(0,-82)
     text(30,802,'Craftoon',23,INK,'Helvetica-Bold')
     text(565-stringWidth('QUICK GUIDE','Helvetica-Bold',11),804,'QUICK GUIDE',11,INK,'Helvetica-Bold')
 
     # Three tinted mode cards. Each leading mode symbol is exactly 20 pt,
     # matching the app control symbols in the toolbar illustrations below.
-    mode_card(22,439,551,336,'canvas','01','CANVAS',outline=[
-        (22,775),(573,775),(573,439),(296,439),(296,553),(22,553)])
-    mode_card(22,237,266,308,'library','02','LIBRARY')
-    mode_card(296,237,277,194,'reader','03','READ')
+    mode_card(22,339,551,436,'canvas','01','CANVAS',outline=[
+        (22,775),(573,775),(573,339),(296,339),(296,417),(22,417)])
+    mode_card(22,137,266,272,'library','02','LIBRARY')
+    mode_card(296,137,277,194,'reader','03','READ')
 
     targets=portrait_header('canvas',34,667,527)
     for target,label in list(zip(targets,['Canvas mode','Library','Read','New','Save','Templates','Undo','Redo','Pages']))[1:]:
@@ -331,47 +377,50 @@ def portrait():
         solid_arrow((target[0],720),target,gap=18)
 
     # The extended orange Drawing group owns the Background Image controls.
-    draw_box(c,30,561,264,100,'#F1FBF8','#D3EBE3',r=7)
-    draw_box(c,304,449,259,212,'#FFF1DF','#F0D2A9',r=7)
+    draw_box(c,30,425,264,236,'#F1FBF8','#D3EBE3',r=7)
+    draw_box(c,304,349,259,312,'#FFF1DF','#F0D2A9',r=7)
     mode_sentence(40,646,'Layout mode:','Create and arrange panels.',TEAL)
     mode_sentence(314,646,'Drawing mode:','Draw inside a panel.','#B76D20')
-    layout=panel_top(40,596,244,'layout')
-    drawing=panel_top(314,596,239,'draw')
-    for target,label in zip(layout+drawing,['Switch mode','Delete panel','Switch mode','Add image']):
-        centered(target[0],576,label,7.5,GRAY)
-        solid_arrow((target[0],586),target,TEAL,gap=17)
-    text(314,558,'Background Image Manipulator',7.2,'#B76D20','Helvetica-Bold')
-    ref=reference(c,314,468,239)
+    layout=panel_top(40,600,244,'layout')
+    drawing=panel_top(314,600,239,'draw')
+    for target,label in zip(layout+drawing,['Switch mode','Border style','Delete panel','Switch mode','Zoom','Add image']):
+        caption_x=target[0]+9 if label=='Border style' else target[0]
+        centered(caption_x,580,label,7,GRAY)
+        solid_arrow((caption_x,590),target,TEAL,gap=13)
+    layout_extras()
+    panel_zoom()
+    text(314,475,'Background Image Manipulator',7.2,'#B76D20','Helvetica-Bold')
+    ref=reference(c,314,380,239)
     for i,label in enumerate(['Show / hide','Move','Rotate','Scale','Opacity','Delete','Done']):
         target=ref(12+i*17.2,33)
-        centered(target[0],455,label,5.8,GRAY)
-        solid_arrow((target[0],464),target,TEAL,gap=14)
+        centered(target[0],367,label,5.8,GRAY)
+        solid_arrow((target[0],376),target,TEAL,gap=14)
 
     # Real Library header, with the selected comic alongside compact actions.
-    targets=portrait_header('library',34,427,242)
+    targets=portrait_header('library',34,291,242)
     for target,label in list(zip(targets,['Library mode','Canvas','Email','Print']))[1:]:
-        centered(target[0],493,label,7.3,INK,'Helvetica-Bold')
-        solid_arrow((target[0],483),target,gap=18)
-    badge(targets[2][0]-13,406)
-    badge(targets[3][0]-13,406)
-    selected_comic(34,247,86)
+        centered(target[0],357,label,7.3,INK,'Helvetica-Bold')
+        solid_arrow((target[0],347),target,gap=18)
+    badge(targets[2][0]-13,292)
+    badge(targets[3][0]-13,292)
+    selected_comic(34,147,76)
     actions=[(153,'square-pen','Canvas','#EA8A23'),
              (197,'glasses','Read','#0D9488'),
              (241,'trash-2','Delete','#DC2626')]
     for cx,name,title,color in actions:
-        if name=='trash-2': draw_box(c,cx-15,324-15,30,30,'#FEF2F2',r=9)
-        draw_icon(c,name,cx,324,20,color)
-        centered(cx,362,title,8,INK,'Helvetica-Bold')
-        solid_arrow((cx,352),(cx,324),gap=17)
-    centered(sum(item[0] for item in actions)/len(actions),281,'Click a comic to show its actions.',8,GRAY)
+        if name=='trash-2': draw_box(c,cx-15,213-15,30,30,'#FEF2F2',r=9)
+        draw_icon(c,name,cx,213,20,color)
+        centered(cx,246,title,8,INK,'Helvetica-Bold')
+        solid_arrow((cx,236),(cx,213),gap=17)
+    centered(sum(item[0] for item in actions)/len(actions),181,'Click a comic to show its actions.',8,GRAY)
 
-    targets=portrait_header('reader',308,315,253)
+    targets=portrait_header('reader',308,215,253)
     for target,label in list(zip(targets,['Read mode','Library','Canvas','Email','Print']))[1:]:
-        centered(target[0],380,label,6.8,INK,'Helvetica-Bold')
-        solid_arrow((target[0],370),target,gap=18)
-    badge(targets[3][0]-13,293)
-    badge(targets[4][0]-13,293)
-    text(308,281,'Swipe to turn pages.',8,GRAY)
+        centered(target[0],280,label,6.8,INK,'Helvetica-Bold')
+        solid_arrow((target[0],270),target,gap=18)
+    badge(targets[3][0]-13,216)
+    badge(targets[4][0]-13,216)
+    text(308,181,'Swipe to turn pages.',8,GRAY)
     c.restoreState()
     c.saveState()
     c.translate(0,18)
@@ -383,9 +432,9 @@ def portrait():
     centered(595.28/2,13,'Created by Squareplayer',6.5,GRAY)
 
 
-# One approved compact guide is shared by portrait and landscape app views.
+# One common English guide is shared by portrait and landscape app views.
 path=OUT / 'craftoon-quick-guide.pdf'
-c=canvas.Canvas(str(path),pagesize=(595.28,659.89),pageCompression=1)
+c=canvas.Canvas(str(path),pagesize=PAGE_SIZE,pageCompression=1)
 c.setTitle('Craftoon | Quick Guide')
 c.setAuthor('Squareplayer')
 portrait()
@@ -400,11 +449,11 @@ assert len(document.pages)==1
 page=document.pages[0]
 extracted=page.extract_text()
 assert not any('\uac00'<=char<='\ud7a3' for char in extracted)
-expected_labels=['CANVAS','Layout mode:','Drawing mode:','Background Image Manipulator','LIBRARY','READ','Opacity','Canvas','FREE','Up to 4 pages per comic | Save 1 comic at a time','Unlimited pages per comic | Save unlimited comics']
+expected_labels=['CANVAS','Border style','Resize / reshape','Solid','Dashed','Dotted','No border','Zoom','Panel zoom','Enlarge only this panel.','Click again to return.','Layout mode:','Drawing mode:','Background Image Manipulator','LIBRARY','READ','Opacity','Canvas','FREE','Up to 4 pages per comic | Save 1 comic at a time','Unlimited pages per comic | Save unlimited comics']
 assert 'PencilKit' not in extracted
 for expected in expected_labels:
     assert expected in extracted,expected
-assert (float(page.mediabox.width),float(page.mediabox.height)) == (595.28,659.89)
+assert (float(page.mediabox.width),float(page.mediabox.height)) == PAGE_SIZE
 shutil.copyfile(path,ROOT / f'ios/Craftoon/{path.name}')
 doc=fitz.open(str(path))
 assert len(doc[0].get_images())==1, "Only the selected-comic capture may be rasterized"

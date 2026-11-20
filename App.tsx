@@ -3,6 +3,7 @@ import {
   StyleSheet,
   View,
   StatusBar,
+  Platform,
   useWindowDimensions,
   Alert,
   Keyboard,
@@ -919,7 +920,7 @@ function CraftoonApp(): React.JSX.Element {
   if (currentScreen === 'editor' || currentScreen === 'reader') {
     return wrap(
       <View style={styles.editorRoot} onTouchStart={() => setPageMenuDismissSignal(value => value + 1)}>
-        <StatusBar hidden />
+        {Platform.OS !== 'ios' && <StatusBar hidden />}
         <SaveComicDialog visible={saveDialogVisible} name={saveName} saving={submittingName}
           error={saveError} onChangeName={setSaveName} onSave={confirmSaveName} onCancel={cancelSaveName} />
           <Header
@@ -992,7 +993,7 @@ function CraftoonApp(): React.JSX.Element {
   // 기본 스플래시 화면
   return wrap(
     <View style={styles.container}>
-      <StatusBar hidden />
+      {Platform.OS !== 'ios' && <StatusBar hidden />}
       <SplashScreen
         onNewStory={anchor => hasCanvasSessionRef.current ? returnToCanvas() : requestFormat('new', anchor)}
         onLoadStory={enterLibrary}

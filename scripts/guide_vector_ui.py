@@ -35,7 +35,7 @@ def icon(c, name, x, y, size, color, stroke=2):
         shape.strokeWidth=stroke
         shape.strokeLineCap=1
         shape.strokeLineJoin=1
-        shape.fillColor=None
+        if hasattr(shape, 'fillColor'): shape.fillColor=None
         group.add(shape)
     renderPDF.draw(group,c,0,0)
     c.restoreState()

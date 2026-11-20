@@ -757,6 +757,76 @@ extension CraftoonInkPerformanceTests {
 
 @MainActor
 final class CraftoonPanelShapeTests: XCTestCase {
+  func testRootAndSceneUseCurrentCanvasOrientationAndRestoreAutomaticScreens() throws {
+    let previous = CraftoonOrientationState.mask
+    defer { CraftoonOrientationState.mask = previous }
+    let controller = ReactNativeDelegate().createRootViewController()
+    XCTAssertTrue(controller is CraftoonRootViewController)
+    XCTAssertTrue(controller.prefersStatusBarHidden)
+    XCTAssertEqual(controller.preferredStatusBarUpdateAnimation, .none)
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let delegate = SceneDelegate()
+    for mask in [UIInterfaceOrientationMask.portrait, .landscapeLeft, .all] {
+      CraftoonOrientationState.mask = mask
+      XCTAssertEqual(controller.supportedInterfaceOrientations, mask)
+      if #available(iOS 27.0, *) {
+        XCTAssertEqual(delegate.supportedInterfaceOrientations(for: scene), mask)
+      }
+    }
+  }
+
+  func testOrientationLockWaitsForChosenPageAndReleasesInAutomaticMode() {
+    let previous = CraftoonOrientationState.mask
+    defer { CraftoonOrientationState.mask = previous }
+    CraftoonOrientationState.mask = .portrait
+    XCTAssertTrue(CraftoonOrientationState.shouldLock(interfaceOrientation: .portrait))
+    XCTAssertFalse(CraftoonOrientationState.shouldLock(interfaceOrientation: .landscapeRight))
+    XCTAssertFalse(CraftoonOrientationState.shouldLock(interfaceOrientation: .unknown))
+    CraftoonOrientationState.mask = .landscapeLeft
+    XCTAssertTrue(CraftoonOrientationState.shouldLock(interfaceOrientation: .landscapeLeft))
+    XCTAssertFalse(CraftoonOrientationState.shouldLock(interfaceOrientation: .landscapeRight))
+    CraftoonOrientationState.mask = .all
+    XCTAssertFalse(CraftoonOrientationState.shouldLock(interfaceOrientation: .portrait))
+    XCTAssertFalse(CraftoonOrientationState.shouldLock(interfaceOrientation: .landscapeLeft))
+  }
+
+  func testVisibleCanvasLocksSceneAndAutomaticModeUnlocksIt() async throws {
+    guard #available(iOS 26.0, *) else { throw XCTSkip("Scene orientation lock requires iPadOS 26.") }
+    let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+    let current = scene.effectiveGeometry.interfaceOrientation
+    guard current != .unknown else { throw XCTSkip("No active interface orientation.") }
+    let previous = CraftoonOrientationState.mask
+    let previousWindow = scene.keyWindow
+    let window = UIWindow(windowScene: scene)
+    let root = CraftoonRootViewController()
+    window.rootViewController = root
+    defer {
+      CraftoonOrientationState.mask = previous
+      window.isHidden = true
+      previousWindow?.makeKeyAndVisible()
+      if let controller = previousWindow?.rootViewController {
+        CraftoonOrientationState.updateLockPreference(on: controller)
+      }
+    }
+    window.makeKeyAndVisible()
+    CraftoonOrientationState.mask = UIInterfaceOrientationMask(rawValue: 1 << current.rawValue)
+    root.setNeedsUpdateOfSupportedInterfaceOrientations()
+    CraftoonOrientationState.updateLockPreference(on: root)
+    for _ in 0..<40 where !scene.effectiveGeometry.isInterfaceOrientationLocked {
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    XCTAssertTrue(root.prefersInterfaceOrientationLocked)
+    XCTAssertTrue(scene.effectiveGeometry.isInterfaceOrientationLocked)
+    XCTAssertTrue(scene.statusBarManager?.isStatusBarHidden == true)
+    CraftoonOrientationState.mask = .all
+    CraftoonOrientationState.updateLockPreference(on: root)
+    for _ in 0..<40 where scene.effectiveGeometry.isInterfaceOrientationLocked {
+      try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    XCTAssertFalse(root.prefersInterfaceOrientationLocked)
+    XCTAssertFalse(scene.effectiveGeometry.isInterfaceOrientationLocked)
+  }
+
   func testRestartedPencilContactInMarginTargetsSelectedCanvasButPreservesControlsAndOtherPanels() throws {
     let window = CraftoonInputWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 700))
     let controller = UIViewController()

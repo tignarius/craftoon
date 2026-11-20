@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import Svg, { Defs, G, LinearGradient, Rect, Stop } from 'react-native-svg';
 import { CanvasOrientation } from '../utils/canvasFormat';
@@ -81,16 +81,30 @@ export function CanvasOrientationPicker({ visible, anchor, placement = 'adaptive
   const resolved = measured && measured.source === anchor ? measured.rect : anchor;
   const horizontal = width > height;
   const reveal = useRef(new Animated.Value(0)).current;
-  const slide = useMemo(() => reveal.interpolate({ inputRange: [0, 1], outputRange: [horizontal ? 12 : -12, 0] }), [horizontal, reveal]);
-  useEffect(() => {
-    reveal.setValue(0);
-    if (!visible || !ready) { return; }
-    const animation = Animated.timing(reveal, { toValue: 1, duration: 200,
-      easing: Easing.out(Easing.cubic), useNativeDriver: true });
-    animation.start();
-    return () => animation.stop();
-  }, [visible, ready, horizontal, reveal]);
-  if (!visible) { return null; }
+  const [phase, setPhase] = useState<'hidden' | 'open' | 'exiting'>('hidden');
+  const [display, setDisplay] = useState<{ width: number; height: number; left: number; top: number; horizontal: boolean }>();
+  const displayRef = useRef(display);
+  const animation = useRef<Animated.CompositeAnimation | null>(null);
+  const transition = useRef(0);
+  // Preserve the old position and entrance axis until the picker has folded away.
+  useLayoutEffect(() => {
+    const revision = ++transition.current;
+    animation.current?.stop();
+    if (!visible) {
+      displayRef.current = undefined;
+      setDisplay(undefined);
+      setPhase('hidden');
+      reveal.setValue(0);
+    } else if (displayRef.current) {
+      setPhase('exiting');
+      animation.current = Animated.timing(reveal, { toValue: 0, duration: 130,
+        easing: Easing.in(Easing.cubic), useNativeDriver: true });
+      animation.current.start(({ finished }) => {
+        if (finished && transition.current === revision) { setPhase('hidden'); }
+      });
+    }
+    return () => { ++transition.current; animation.current?.stop(); };
+  }, [visible, width, height, reveal]);
   const center = resolved ? resolved.x + resolved.width / 2 : 80;
   const landscape = width > height && placement !== 'below';
   const desiredLeft = landscape && resolved ? resolved.x - 168 - 8 : center - 84;
@@ -99,13 +113,33 @@ export function CanvasOrientationPicker({ visible, anchor, placement = 'adaptive
     : (resolved ? resolved.y + resolved.height + 8 : 100) + (placement === 'below' ? 6 : 0);
   const left = Math.max(12, Math.min(width - 180, desiredLeft));
   const top = Math.max(12, Math.min(height - cardHeight - 12, desiredTop));
+  useLayoutEffect(() => {
+    if (!visible || !ready || phase === 'exiting') { return; }
+    const next = { width, height, left, top, horizontal };
+    if (phase === 'hidden') {
+      displayRef.current = next;
+      setDisplay(next);
+      setPhase('open');
+      reveal.setValue(0);
+      animation.current = Animated.timing(reveal, { toValue: 1, duration: 200,
+        easing: Easing.out(Easing.cubic), useNativeDriver: true });
+      animation.current.start();
+    } else if (displayRef.current?.width === width && displayRef.current.height === height) {
+      displayRef.current = next;
+      setDisplay(previous => previous?.left === left && previous.top === top ? previous : next);
+    }
+  }, [visible, ready, phase, width, height, left, top, horizontal, reveal]);
+  const slide = useMemo(() => reveal.interpolate({ inputRange: [0, 1],
+    outputRange: [display?.horizontal ? 12 : -12, 0] }), [display?.horizontal, reveal]);
+  const interactive = ready && phase === 'open' && display?.width === width && display.height === height;
+  if (!visible) { return null; }
   return <View style={styles.overlay} accessibilityViewIsModal onLayout={remeasure}>
     <Pressable style={StyleSheet.absoluteFill} accessibilityRole="button"
       accessibilityLabel="Cancel canvas selection" onPress={onCancel} />
-    <Animated.View testID="canvas-orientation-card" pointerEvents={ready ? 'auto' : 'none'} accessibilityElementsHidden={!ready}
+    <Animated.View testID="canvas-orientation-card" pointerEvents={interactive ? 'auto' : 'none'} accessibilityElementsHidden={!interactive}
       onLayout={event => { const next = event.nativeEvent.layout.height; if (next > 0) { setCardHeight(previous => previous === next ? previous : next); } }}
-      style={[styles.card, { left, top, opacity: ready ? 1 : 0,
-        transform: [horizontal ? { translateX: slide } : { translateY: slide }] }]}>
+      style={[styles.card, { left: display?.left ?? left, top: display?.top ?? top, opacity: phase === 'hidden' ? 0 : reveal,
+        transform: [display?.horizontal ? { translateX: slide } : { translateY: slide }] }]}>
       <View style={styles.choices}>
         {(['portrait', 'landscape'] as const).map(orientation => <TouchableOpacity key={orientation}
           accessibilityRole="button" accessibilityLabel={orientation === 'portrait' ? 'Portrait canvas' : 'Landscape canvas'}

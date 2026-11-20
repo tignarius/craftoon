@@ -56,7 +56,7 @@ const SplashScreen: React.FC<SplashScreenProps> = ({ onNewStory, onLoadStory }) 
             colors={['#D946EF', '#C026D3', '#9333EA', '#4F46E5', '#0EA5E9', '#06B6D4']}
             start={{ x: 0.0, y: 0.85 }}
             end={{ x: 1.0, y: 0.15 }}
-            style={[styles.gradient, { width, height }]}
+            style={styles.gradient}
         >
             <SafeAreaView style={styles.safeArea}>
                 <View style={styles.modeInfo}><ModeInfoButton mode="welcome" /></View>
