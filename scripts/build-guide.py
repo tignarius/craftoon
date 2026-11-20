@@ -20,7 +20,7 @@ OUT = ROOT / 'output/pdf'
 OUT.mkdir(parents=True, exist_ok=True)
 PREVIEW = ROOT / 'tmp/pdfs'
 PREVIEW.mkdir(parents=True, exist_ok=True)
-PAGE_SIZE = (595.28, 759.89)
+PAGE_SIZE = (595.28, 871.89)
 INK, GRAY, PURPLE, TEAL = '#17243B', '#536179', '#7C3AED', '#0D9488'
 c = None
 
@@ -207,14 +207,15 @@ def portrait_header(mode,x,y,width=535):
     draw_box(c,x+1,y+1,width-2,5,'#F1F5F9',r=2)
     cy=y+25
     if mode=='canvas':
-        centers=[x+24,x+80,x+136,x+192,x+248,x+304,x+360,x+400]
+        centers=[x+24,x+76,x+128,x+180,x+232,x+284,x+336,x+388,x+432]
         entries=[('square-pen','#EA8A23'),('library-big','#8B5CF6'),
                  ('glasses','#0D9488'),('file','#647ACB'),
                  ('download','#3B82F6'),('grid-2x2','#1ABC9C'),
-                 ('undo-2','#EA8A23'),('redo-2','#CFC7BD')]
+                 ('auto-arrange','#1ABC9C'),('undo-2','#EA8A23'),('redo-2','#CFC7BD')]
         draw_box(c,centers[0]-15,cy-15,30,30,'#FFF5E8','#FED7AA',r=8)
         for cx,(name,color) in zip(centers,entries):
-            draw_icon(c,name,cx,cy,20,color,2.5 if name=='download' else 2)
+            if name=='auto-arrange': auto_arrange_glyph(cx,cy,20)
+            else: draw_icon(c,name,cx,cy,20,color,2.5 if name=='download' else 2)
         page=(x+width-29,cy)
         draw_box(c,page[0]-18,cy-13,36,26,'#FFFFFF','#E8EDF2',r=6)
         centered(page[0],cy-3,'1 / 1',8.5,GRAY)
@@ -235,9 +236,17 @@ def portrait_header(mode,x,y,width=535):
 
 
 def border_style_glyph(cx, cy, style='solid', size=19, color='#3B82F6'):
-    # Match PanelBorderIcon's rectangle, dash patterns and no-border slash.
+    # Match the mixed-style toolbar icon and the four menu choices.
     c.saveState(); c.translate(cx-size/2,cy+size/2); c.scale(size/24,-size/24)
     c.setStrokeColor(HexColor(color)); c.setLineWidth(1.8)
+    if style == 'mixed':
+        c.setLineCap(1); c.line(3,5,21,5)
+        c.setFillColor(HexColor(color))
+        # Explicit marks match the solid line's round-cap extent: 2.1..21.9.
+        for x in [2.1,9.7,17.3]: c.rect(x,11.1,4.6,1.8,stroke=0,fill=1)
+        for x in [3,6.6,10.2,13.8,17.4,21]: c.circle(x,19,.9,stroke=0,fill=1)
+        c.restoreState()
+        return
     if style == 'dashed': c.setDash(5,3)
     elif style in ('dotted','none'): c.setDash(1,3)
     if style == 'dotted': c.setLineCap(1)
@@ -259,6 +268,22 @@ def reshape_glyph(cx,cy,size=19):
     c.restoreState()
 
 
+def auto_arrange_glyph(cx,cy,size=20,background='#FFFFFF'):
+    draw_icon(c,'panels-top-left',cx,cy,size,'#1ABC9C')
+    draw_box(c,cx+size*.27,cy+size*.27,size*.7,size*.7,background,r=2)
+    draw_icon(c,'sparkles',cx+size*.5,cy+size*.5,size*14/22,'#1ABC9C',2.2)
+
+
+def artwork_lock_glyph(cx,cy,size=16,locked=False):
+    color='#FFFFFF' if locked else '#3B82F6'
+    background='#3B82F6' if locked else '#FFFFFF'
+    # Match the app's overlapping Image and LockKeyhole symbols.
+    draw_icon(c,'image',cx-size*.1,cy+size*.1,size*.8,color,2.2)
+    draw_box(c,cx-size*.02,cy-size*.42,size*.62,size*.62,background,r=1)
+    draw_icon(c,'lock-keyhole' if locked else 'lock-keyhole-open',
+              cx+size*.26,cy-size*.14,size*.55,color,2.6)
+
+
 def panel_top(x,y,width,mode):
     """Current panel tool positions: mode and tools on left, Layout trash on right."""
     layout=mode=='layout'
@@ -268,19 +293,22 @@ def panel_top(x,y,width,mode):
     p=c.beginPath(); p.moveTo(x,y); p.lineTo(x,y+38)
     p.lineTo(x+width,y+38); p.lineTo(x+width,y); c.drawPath(p)
     cy=y+21
-    centers=[x+23,x+63,x+width-23] if layout else [x+23,x+63,x+96]
-    names=['move','border','trash-2'] if layout else ['pen','zoom-in','image']
+    centers=[x+23,x+63,x+96,x+width-23] if layout else [x+23,x+63,x+96]
+    names=['move','border','artwork-lock','trash-2'] if layout else ['pen','zoom-in','image']
     for cx,name in zip(centers,names):
         color='#EF4444' if name=='trash-2' else border
         draw_box(c,cx-11,cy-11,22,22,'#FFFFFF',color,r=11)
-        if name=='border': border_style_glyph(cx,cy,size=16,color=color)
+        if name=='border': border_style_glyph(cx,cy,style='mixed',size=16,color=color)
+        elif name=='artwork-lock':
+            artwork_lock_glyph(cx,cy)
+            c.setStrokeColor(HexColor(color)); c.setLineWidth(.7); c.circle(cx,cy,11,stroke=1,fill=0)
         else: draw_icon(c,name,cx,cy,16,color,2.2)
     return [(cx,cy) for cx in centers]
 
 
 def layout_extras():
     # Keep the four alternatives together as a compact visual choice set.
-    for cx,style,label in zip([96,140,184,228],['solid','dashed','dotted','none'],['Solid','Dashed','Dotted','No border']):
+    for cx,style,label in zip([52,86,120,154],['solid','dashed','dotted','none'],['Solid','Dashed','Dotted','No border']):
         border_style_glyph(cx,551,style,size=20)
         centered(cx,531,label,7.2,GRAY)
     text(40,505,'Resize / reshape',8.5,'#3B82F6','Helvetica-Bold')
@@ -292,6 +320,18 @@ def layout_extras():
     reshape_glyph(181,478,27)
     text(40,445,'Click the corner circle to switch tools.',7.5,GRAY)
     text(40,432,'Drag the shape tool left or right to reshape.',7.5,GRAY)
+    text(40,419,'Artwork follows the panel unless locked.',7.5,GRAY)
+
+    auto_arrange_glyph(55,390,20,background='#F1FBF8')
+    text(80,400,'Auto arrange',8.5,'#0D9488','Helvetica-Bold')
+    lines(80,386,['Tidy rough panels with template spacing.',
+                  'Keep the occupied height and aligned panels.'],7.5,12)
+
+    draw_box(c,43,330,24,24,'#3B82F6','#3B82F6',r=12)
+    artwork_lock_glyph(55,342,17,locked=True)
+    text(80,350,'Lock artwork',8.5,'#3B82F6','Helvetica-Bold')
+    lines(80,336,['Keep artwork fixed while editing the panel.',
+                  'Click again to unlock.'],7.5,12)
 
 
 def panel_zoom():
@@ -360,32 +400,35 @@ def selected_comic(x,y,width):
 
 def portrait():
     c.saveState()
-    c.translate(0,-82)
+    c.translate(0,30)
     text(30,802,'Craftoon',23,INK,'Helvetica-Bold')
     text(565-stringWidth('QUICK GUIDE','Helvetica-Bold',11),804,'QUICK GUIDE',11,INK,'Helvetica-Bold')
 
     # Three tinted mode cards. Each leading mode symbol is exactly 20 pt,
     # matching the app control symbols in the toolbar illustrations below.
-    mode_card(22,339,551,436,'canvas','01','CANVAS',outline=[
-        (22,775),(573,775),(573,339),(296,339),(296,417),(22,417)])
-    mode_card(22,137,266,272,'library','02','LIBRARY')
-    mode_card(296,137,277,194,'reader','03','READ')
+    mode_card(22,305,551,470,'canvas','01','CANVAS')
+    mode_card(22,25,266,272,'library','02','LIBRARY')
+    mode_card(296,103,277,194,'reader','03','READ')
 
     targets=portrait_header('canvas',34,667,527)
-    for target,label in list(zip(targets,['Canvas mode','Library','Read','New','Save','Templates','Undo','Redo','Pages']))[1:]:
+    for target,label in list(zip(targets,['Canvas mode','Library','Read','New','Save','Templates','Auto arrange','Undo','Redo','Pages']))[1:]:
         centered(target[0],727,label,7.3,INK,'Helvetica-Bold')
         solid_arrow((target[0],720),target,gap=18)
 
     # The extended orange Drawing group owns the Background Image controls.
-    draw_box(c,30,425,264,236,'#F1FBF8','#D3EBE3',r=7)
-    draw_box(c,304,349,259,312,'#FFF1DF','#F0D2A9',r=7)
+    draw_box(c,30,313,264,348,'#F1FBF8','#D3EBE3',r=7)
+    draw_box(c,304,313,259,348,'#FFF1DF','#F0D2A9',r=7)
     mode_sentence(40,646,'Layout mode:','Create and arrange panels.',TEAL)
     mode_sentence(314,646,'Drawing mode:','Draw inside a panel.','#B76D20')
     layout=panel_top(40,600,244,'layout')
     drawing=panel_top(314,600,239,'draw')
-    for target,label in zip(layout+drawing,['Switch mode','Border style','Delete panel','Switch mode','Zoom','Add image']):
-        caption_x=target[0]+9 if label=='Border style' else target[0]
-        centered(caption_x,580,label,7,GRAY)
+    for target,label in zip(layout+drawing,['Switch mode','Border style','Lock artwork','Delete panel','Switch mode','Zoom','Add image']):
+        caption_x=target[0]
+        if label in ('Border style','Lock artwork'):
+            first,second=label.split(' ')
+            centered(caption_x,580,first,7,GRAY)
+            centered(caption_x,570,second,7,GRAY)
+        else: centered(caption_x,580,label,7,GRAY)
         solid_arrow((caption_x,590),target,TEAL,gap=13)
     layout_extras()
     panel_zoom()
@@ -396,6 +439,7 @@ def portrait():
         centered(target[0],367,label,5.8,GRAY)
         solid_arrow((target[0],376),target,TEAL,gap=14)
 
+    c.saveState(); c.translate(0,-112)
     # Real Library header, with the selected comic alongside compact actions.
     targets=portrait_header('library',34,291,242)
     for target,label in list(zip(targets,['Library mode','Canvas','Email','Print']))[1:]:
@@ -414,6 +458,7 @@ def portrait():
         solid_arrow((cx,236),(cx,213),gap=17)
     centered(sum(item[0] for item in actions)/len(actions),181,'Click a comic to show its actions.',8,GRAY)
 
+    c.saveState(); c.translate(0,78)
     targets=portrait_header('reader',308,215,253)
     for target,label in list(zip(targets,['Read mode','Library','Canvas','Email','Print']))[1:]:
         centered(target[0],280,label,6.8,INK,'Helvetica-Bold')
@@ -422,12 +467,14 @@ def portrait():
     badge(targets[4][0]-13,216)
     text(308,181,'Swipe to turn pages.',8,GRAY)
     c.restoreState()
-    c.saveState()
-    c.translate(0,18)
-    badge(30,20,'FREE')
-    text(65,22,'Up to 4 pages per comic | Save 1 comic at a time',7.3,GRAY)
-    badge(304,20)
-    text(339,22,'Unlimited pages per comic | Save unlimited comics | Email & print',7.3,GRAY)
+    c.restoreState()
+
+    # Benefits occupy the space beneath the raised Read card.
+    draw_box(c,296,25,277,70,'#F8FAFC','#DFE6EE',r=8)
+    badge(308,71,'FREE')
+    lines(343,78,['Up to 4 pages per comic','Save 1 comic at a time'],7.3,12)
+    badge(308,38)
+    lines(343,45,['Unlimited pages per comic','Save unlimited comics | Email & Print'],7.3,12)
     c.restoreState()
     centered(595.28/2,13,'Created by Squareplayer',6.5,GRAY)
 
@@ -447,9 +494,9 @@ with path.open("wb") as stream: writer.write(stream)
 document=PdfReader(path)
 assert len(document.pages)==1
 page=document.pages[0]
-extracted=page.extract_text()
+extracted=' '.join(page.extract_text().split())
 assert not any('\uac00'<=char<='\ud7a3' for char in extracted)
-expected_labels=['CANVAS','Border style','Resize / reshape','Solid','Dashed','Dotted','No border','Zoom','Panel zoom','Enlarge only this panel.','Click again to return.','Layout mode:','Drawing mode:','Background Image Manipulator','LIBRARY','READ','Opacity','Canvas','FREE','Up to 4 pages per comic | Save 1 comic at a time','Unlimited pages per comic | Save unlimited comics']
+expected_labels=['Auto arrange','Lock artwork','Artwork follows the panel unless locked.','CANVAS','Border style','Resize / reshape','Solid','Dashed','Dotted','No border','Zoom','Panel zoom','Enlarge only this panel.','Click again to return.','Layout mode:','Drawing mode:','Background Image Manipulator','LIBRARY','READ','Opacity','Canvas','FREE','Up to 4 pages per comic','Save 1 comic at a time','Unlimited pages per comic','Save unlimited comics']
 assert 'PencilKit' not in extracted
 for expected in expected_labels:
     assert expected in extracted,expected

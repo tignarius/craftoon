@@ -417,7 +417,7 @@ export const Panel: React.FC<PanelProps> = ({
             activeOpacity={0.9}
             hitSlop={iconHitSlop} accessibilityLabel={`Panel border: ${borderStyle}`} accessibilityState={{ expanded: borderMenu }}
             onPress={() => setBorderMenu(value => !value)} style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder }]}>
-            <PanelBorderIcon value={borderStyle} size={iconSize} color={styleConfig.icon} />
+            <PanelBorderIcon mixed value={borderStyle} size={iconSize} color={styleConfig.icon} />
           </TouchableOpacity>}
           {mode === 'layout' && onArtworkLockChange && <TouchableOpacity accessibilityRole="button"
             accessibilityLabel={panel.artworkLocked ? 'Unlock artwork' : 'Lock artwork'}
@@ -431,9 +431,9 @@ export const Panel: React.FC<PanelProps> = ({
               <ImageIcon size={iconSize * 0.8} color={panel.artworkLocked ? '#FFFFFF' : styleConfig.icon} strokeWidth={2.2} />
               {panel.artworkLocked
                 ? <LockKeyhole size={iconSize * 0.55} color="#FFFFFF" strokeWidth={2.6}
-                    style={{ position: 'absolute', right: -1, bottom: -1, backgroundColor: styleConfig.icon, borderRadius: 2 }} />
+                    style={{ position: 'absolute', right: 0, bottom: 2, backgroundColor: styleConfig.icon, borderRadius: 2 }} />
                 : <LockKeyholeOpen size={iconSize * 0.55} color={styleConfig.icon} strokeWidth={2.6}
-                    style={{ position: 'absolute', right: -1, bottom: -1, backgroundColor: '#FFFFFF', borderRadius: 2 }} />}
+                    style={{ position: 'absolute', right: 0, bottom: 2, backgroundColor: '#FFFFFF', borderRadius: 2 }} />}
             </View>
           </TouchableOpacity>}
           {mode === 'draw' && onToggleFocus && <TouchableOpacity accessibilityRole="button"
