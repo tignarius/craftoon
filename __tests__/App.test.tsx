@@ -1387,3 +1387,80 @@ test('a template on a blank page does not ask to save artwork on another page', 
     expect.objectContaining({ id: panelId, drawingData: 'craftoon-ink:artwork', drawingHasStrokes: true }),
   ]);
 });
+
+test('auto arrange captures native ink, changes only the active page, and undoes in one step', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  let timestamp = 2000000000000;
+  jest.spyOn(Date, 'now').mockImplementation(() => timestamp++);
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 70, y: 140, width: 240, height: 280 }));
+  const first = renderer.root.findByType(Workspace).props.panels[0];
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 450, y: 150, width: 300, height: 260 }));
+  const before = renderer.root.findByType(Workspace).props.panels;
+  await act(async () => renderer.root.findByType(Header).props.onAddPage());
+  await act(async () => renderer.root.findByType(Header).props.onPrevPage());
+  const pageCount = renderer.root.findByType(Header).props.totalPages;
+  (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => items.map((page: any) => ({ ...page,
+    panels: page.panels.map((panel: any) => panel.id === first.id ? { ...panel, drawingData: 'craftoon-ink:last', drawingHasStrokes: true } : panel),
+  })));
+  await act(async () => renderer.root.findByType(Header).props.onAutoArrange());
+  const after = renderer.root.findByType(Workspace).props.panels;
+  expect(after.map((p: any) => p.id)).toEqual(before.map((p: any) => p.id));
+  expect(after[0].x).toBe(12); expect(after[0].y).toBe(140);
+  expect(after[1].x - after[0].x - after[0].width).toBeCloseTo(16);
+  expect(after[0].drawingData).toBe('craftoon-ink:last');
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(pageCount);
+  expect(renderer.root.findByType(Workspace).props.panelModes).toEqual({});
+  await act(async () => renderer.root.findByType(Header).props.onAutoArrange());
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(renderer.root.findByType(Workspace).props.panels[0]).toMatchObject({ ...first, drawingData: 'craftoon-ink:last' });
+  expect(renderer.root.findByType(Workspace).props.panels[1]).toMatchObject(before[1]);
+  await act(async () => renderer.root.findByType(Header).props.onRedo());
+  expect(renderer.root.findByType(Workspace).props.panels).toEqual(after);
+  await act(async () => renderer.root.findByType(Header).props.onNextPage());
+  expect(renderer.root.findByType(Workspace).props.panels).toEqual([]);
+});
+
+test('artwork lock survives panel geometry edits, Undo and saving', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 100, y: 120, width: 300, height: 300 }));
+  const id = renderer.root.findByType(Workspace).props.panels[0].id;
+  const image = { uri: 'file:///reference.jpg', x: 25, y: 30, width: 150, height: 160, rotation: 0, opacity: 0.4 };
+  await act(async () => renderer.root.findByType(Workspace).props.onUpdatePanel(id, { tracingImage: image, drawingData: 'craftoon-ink:locked' }));
+  await act(async () => renderer.root.findByType(Workspace).props.onCommitPanelGeometry(id, { artworkLocked: true }));
+  await act(async () => renderer.root.findByType(Workspace).props.onCommitPanelGeometry(id, {
+    x: 60, y: 200, width: 450, height: 200, resizeInk: true, warpInk: true,
+  }));
+  expect(renderer.root.findByType(Workspace).props.panels[0]).toMatchObject({ artworkLocked: true, x: 60, y: 200,
+    width: 450, height: 200, resizeInk: false, warpInk: false,
+    tracingImage: { x: 65, y: -50, width: 150, height: 160 } });
+  await act(async () => renderer.root.findByType(Header).props.onUndo());
+  expect(renderer.root.findByType(Workspace).props.panels[0]).toMatchObject({ artworkLocked: true, x: 100, y: 120, width: 300, height: 300, tracingImage: image });
+  await act(async () => renderer.root.findByType(Header).props.onSaveStory());
+  await act(async () => renderer.root.findByType(SaveComicDialog).props.onSave());
+  expect((storyLibrary.saveStory as jest.Mock).mock.calls[0][0].pages[0].panels[0].artworkLocked).toBe(true);
+});
+
+test('Magic repairs a moved box without replacing aligned panel objects or capturing again on a tidy page', async () => {
+  const { createPanelGrid } = require('../src/utils/panelGrid');
+  const grid = createPanelGrid(2, 3, { width: 900, height: 1200 }, 'steady').map((panel: any) => ({ ...panel,
+    drawingData: `craftoon-ink:${panel.id}`, drawingHasStrokes: true }));
+  (storyLibrary.loadDraft as jest.Mock).mockResolvedValueOnce({ id: 'steady-story', title: 'Stable comic', isSaved: false, pageIndex: 0,
+    pages: [{ id: 'steady-page', canvasSize: { width: 900, height: 1200 }, panels: grid, bubbles: [] }],
+  });
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(<App />); });
+  const moved = grid[3];
+  await act(async () => renderer.root.findByType(Workspace).props.onCommitPanelGeometry(moved.id, { x: moved.x - 24, y: moved.y + 24 }));
+  const before = renderer.root.findByType(Workspace).props.panels;
+  (storyLibrary.capturePages as jest.Mock).mockImplementation(async items => JSON.parse(JSON.stringify(items)));
+  await act(async () => renderer.root.findByType(Header).props.onAutoArrange());
+  const after = renderer.root.findByType(Workspace).props.panels;
+  before.filter((p: any) => p.id !== moved.id).forEach((p: any) => expect(after.find((q: any) => q.id === p.id)).toBe(p));
+  expect(after.find((p: any) => p.id === moved.id)).toMatchObject({ x: moved.x, y: moved.y, width: moved.width, height: moved.height });
+  await act(async () => renderer.root.findByType(Workspace).props.onPanelSelect(grid[0].id));
+  (storyLibrary.capturePages as jest.Mock).mockClear();
+  await act(async () => renderer.root.findByType(Header).props.onAutoArrange());
+  expect(storyLibrary.capturePages).not.toHaveBeenCalled();
+  expect(renderer.root.findByType(Workspace).props.panelModes).toEqual({ [grid[0].id]: 'draw' });
+});

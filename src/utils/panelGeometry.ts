@@ -19,6 +19,13 @@ export function worldCorners(panel: Pick<ComicPanel, 'x' | 'y' | 'width' | 'heig
   return panelCorners(panel).map(p => ({ x: panel.x + p.x * panel.width, y: panel.y + p.y * panel.height })) as PanelCorners;
 }
 
+// Respect the shortest edge of an existing valid shape when it is already
+// narrower than the normal handle minimum (for example an arranged trapezoid).
+export function panelMinimumEdgeLength(panel: Pick<ComicPanel, 'x' | 'y' | 'width' | 'height' | 'corners'>) {
+  const points = worldCorners(panel);
+  return Math.min(48, ...points.map((p, i) => Math.hypot(p.x - points[(i + 1) % 4].x, p.y - points[(i + 1) % 4].y)));
+}
+
 // The visible outline and controls sit inside the panel's two-point border.
 // Keep this frame distinct from the retained ink/document frame.
 export function panelRenderedFrame<T extends Pick<ComicPanel, 'x' | 'y' | 'width' | 'height'>>(panel: T): T {
@@ -28,6 +35,7 @@ export function panelRenderedFrame<T extends Pick<ComicPanel, 'x' | 'y' | 'width
 // Keep ink coordinates stable: changing a corner changes only the clipping path.
 export function movePanelCorner(panel: ComicPanel, index: number, dx: number, dy: number): PanelCorners {
   const original = panelCorners(panel);
+  const minimumEdge = panelMinimumEdgeLength(panel);
   const make = (fraction: number) => {
     const points = original.map(p => ({ ...p })) as PanelCorners;
     points[index] = { x: Math.max(0, Math.min(1, original[index].x + dx * fraction / panel.width)),
@@ -37,7 +45,7 @@ export function movePanelCorner(panel: ComicPanel, index: number, dx: number, dy
   const valid = (points: PanelCorners) => {
     const world = points.map(p => ({ x: p.x * panel.width, y: p.y * panel.height }));
     return world.every((p, i) => cross(p, world[(i + 1) % 4], world[(i + 2) % 4]) >= 400
-      && Math.hypot(p.x - world[(i + 1) % 4].x, p.y - world[(i + 1) % 4].y) >= Math.min(48, panel.width / 2, panel.height / 2))
+      && Math.hypot(p.x - world[(i + 1) % 4].x, p.y - world[(i + 1) % 4].y) >= minimumEdge - 0.001)
       && panelCorners({ corners: points }) === points;
   };
   const requested = make(1);
@@ -158,7 +166,7 @@ export function panelFocusTransform(panel: Rect & Pick<ComicPanel, 'corners'>, v
 
 // Find a horizontal strip inside the polygon so controls never float in a
 // clipped-off corner. Compact panels use smaller buttons rather than overlap.
-export function panelControlLayout(panel: Pick<ComicPanel, 'width' | 'height' | 'corners'>) {
+export function panelControlLayout(panel: Pick<ComicPanel, 'width' | 'height' | 'corners'>, buttonCount = 3, buttonScale = 1) {
   const width = panel.width - 4, height = panel.height - 4;
   const points = panelCorners(panel).map(p => ({ x: p.x * width, y: p.y * height }));
   const span = (y: number) => {
@@ -179,10 +187,11 @@ export function panelControlLayout(panel: Pick<ComicPanel, 'width' | 'height' | 
     if (!a || !b) { continue; }
     const left = Math.max(a.left, b.left), right = Math.min(a.right, b.right);
     if (right - left > best.available) { best = { top, left, right, available: right - left }; }
-    if (right - left >= 117) { break; }
+    if (right - left >= (buttonCount === 3 ? 117 : (buttonCount + 0.35) * 35 * buttonScale + (buttonCount - 1) * 6 + 2.1)) { break; }
   }
   return { top: best.top, left: best.left, right: width - best.right,
-    buttonSize: Math.min(35, Math.max(14, (best.available - 12) / 3)) };
+    buttonSize: buttonCount === 3 ? Math.min(35, Math.max(14, (best.available - 12) / 3))
+      : Math.min(35, Math.max(8, (best.available - (buttonCount - 1) * 6 - 2.1) / ((buttonCount + 0.35) * buttonScale))) };
 }
 
 

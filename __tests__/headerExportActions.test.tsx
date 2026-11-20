@@ -9,7 +9,7 @@ jest.mock('lucide-react-native', () => {
   const icon = () => null;
   return { Mail: icon, Printer: icon, File: icon, Download: icon, LibraryBig: icon,
     SquarePen: icon, Glasses: icon, ChevronLeft: icon, ChevronRight: icon,
-    Plus: icon, Minus: icon, Check: icon, Undo2: icon, Redo2: icon };
+    PanelsTopLeft: icon, Sparkles: icon, Plus: icon, Minus: icon, Check: icon, Undo2: icon, Redo2: icon };
 });
 jest.mock('../src/components/TemplatePicker', () => ({ TemplatePicker: () => null }));
 
@@ -89,4 +89,15 @@ test('touches outside the page menu dismiss it; touches inside keep it open', as
   expect(button('Add next canvas page')).toBeDefined();
   await act(async () => renderer.update(<Header {...props} pageMenuDismissSignal={1} />));
   expect(button('Add next canvas page')).toBeUndefined();
+});
+
+test('auto arrange is next to templates, disabled on an empty canvas, and absent in Read', async () => {
+  const arrange = jest.fn();
+  await act(async () => { renderer = ReactTestRenderer.create(<Header {...props} onAutoArrange={arrange} />); });
+  expect(button('Auto arrange panels')!.props.disabled).toBe(true);
+  await act(async () => renderer.update(<Header {...props} onAutoArrange={arrange} canAutoArrange />));
+  await act(async () => button('Auto arrange panels')!.props.onPress());
+  expect(arrange).toHaveBeenCalledTimes(1);
+  await act(async () => renderer.update(<Header {...props} onAutoArrange={arrange} canAutoArrange reading />));
+  expect(button('Auto arrange panels')).toBeUndefined();
 });

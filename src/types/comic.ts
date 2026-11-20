@@ -6,9 +6,10 @@ export type PanelPoint = { x: number; y: number };
 // Clockwise normalized corners: top-left, top-right, bottom-right, bottom-left.
 export type PanelCorners = [PanelPoint, PanelPoint, PanelPoint, PanelPoint];
 export type PanelBorderStyle = 'solid' | 'dashed' | 'dotted' | 'none';
-export type PanelInkGeometry = { width: number; height: number; corners?: PanelCorners; sourceDrawingData?: string };
+export type PanelInkGeometry = { x?: number; y?: number; width: number; height: number; corners?: PanelCorners; sourceDrawingData?: string };
 
 export interface ComicPanel {
+  artworkLocked?: boolean; // Keep artwork fixed in page coordinates while editing the panel.
   corners?: PanelCorners;
   shapeRevision?: number;
   resizeInk?: boolean;

@@ -1,5 +1,5 @@
 import type { ComicPanel, PanelPoint, PanelCorners } from '../types/comic';
-import { movePanelHandle, panelCorners, worldCorners, panelsCollide, panelVisibleBounds, panelRenderedFrame } from './panelGeometry';
+import { movePanelHandle, panelCorners, worldCorners, panelsCollide, panelVisibleBounds, panelRenderedFrame, panelMinimumEdgeLength } from './panelGeometry';
 import { PANEL_SNAP_GAPS, PANEL_PADDING, SNAP_THRESHOLD, CLOSE_SNAP_THRESHOLD } from './panelMetrics';
 
 type Bounds = { width: number; height: number };
@@ -101,6 +101,7 @@ export function snapPanelMove(panel: ComicPanel, position: { x: number; y: numbe
 
 function resizeSlopedPanel(panel: ComicPanel, dx: number, side: Side, others: ComicPanel[], bounds?: Bounds, guides?: Guide[]): PanelResizeResult {
   const original = panelCorners(panel), world = worldCorners(panel), visible = panelVisibleBounds(panel);
+  const minimumEdge = panelMinimumEdgeLength(panel);
   if (dx === 0) { return { x: panel.x, width: panel.width, height: panel.height, corners: panel.corners ?? original }; }
   const index = side === 'left' ? 3 : 2;
   const oldPoint = world[index];
@@ -124,7 +125,7 @@ function resizeSlopedPanel(panel: ComicPanel, dx: number, side: Side, others: Co
     const proposed = { ...panel, ...candidate }, current = panelVisibleBounds(proposed), points = worldCorners(proposed);
     return current.width >= Math.min(76, visible.width) - 0.001
       && points.every((p, i) => p.x >= PANEL_PADDING - 0.001 && (!bounds || p.x <= bounds.width - PANEL_PADDING + 0.001)
-        && Math.hypot(p.x - points[(i + 1) % 4].x, p.y - points[(i + 1) % 4].y) >= Math.min(48, visible.width / 2, visible.height / 2))
+        && Math.hypot(p.x - points[(i + 1) % 4].x, p.y - points[(i + 1) % 4].y) >= minimumEdge - 0.001)
       && !others.some(other => !initiallyOverlapping.has(other.id) && panelsCollide(proposed, other, 0));
   };
   let result = make(delta);
@@ -163,6 +164,59 @@ export function snapPanelResize(panel: ComicPanel, dx: number, dy: number, side:
   return { ...resized, ...(resized.x !== undefined ? { x: resized.x - 2 } : {}), width: resized.width + 4, height: resized.height + 4 };
 }
 
+// Move the lower corners along the existing side lines, rather than stretching
+// a normalized trapezoid vertically (which changes its angle and crosses its
+// neighbor). The upper corners and the perpendicular gutter stay fixed.
+function resizeAlongSlopedSides(panel: ComicPanel, dy: number, side: Side, others: ComicPanel[], bounds?: Bounds, guides?: Guide[]): PanelResizeResult {
+  const original = worldCorners(panel), visible = panelVisibleBounds(panel);
+  const index = side === 'left' ? 3 : 2, minimumEdge = panelMinimumEdgeLength(panel);
+  const minimumHeight = Math.min(76, visible.height);
+  const maximumBottom = bounds ? bounds.height - PANEL_PADDING : Infinity;
+  const delta = (value: number) => Math.max(minimumHeight - visible.height,
+    Math.min(maximumBottom - visible.y - visible.height, value));
+  const make = (movement: number): PanelResizeResult => {
+    const points = original.map(p => ({ ...p }));
+    for (const [top, bottom] of [[0, 3], [1, 2]]) {
+      const a = original[top], b = original[bottom], run = b.x - a.x, rise = b.y - a.y;
+      if (Math.abs(rise) < 0.001) { continue; }
+      points[bottom] = { x: b.x + movement * run / rise, y: b.y + movement };
+    }
+    const x = Math.min(panel.x, ...points.map(p => p.x));
+    const width = Math.max(panel.x + panel.width, ...points.map(p => p.x)) - x;
+    const height = Math.max(...points.map(p => p.y)) - panel.y;
+    const corners = points.map(p => ({ x: (p.x - x) / width, y: (p.y - panel.y) / height })) as PanelCorners;
+    return { x, width, height, corners, resizeInk: true, warpInk: true,
+      shapeRevision: (panel.shapeRevision ?? 0) + (Math.abs(x - panel.x) > 0.000001 || Math.abs(width - panel.width) > 0.000001 ? 1 : 0),
+      ...(panel.tracingImage ? { tracingImage: { ...panel.tracingImage, x: panel.tracingImage.x + panel.x - x } } : {}) };
+  };
+  const initiallyOverlapping = new Set(others.filter(other => panelsCollide(panel, other, 0)).map(other => other.id));
+  const valid = (update: PanelResizeResult) => {
+    const candidate = { ...panel, ...update }, points = worldCorners(candidate), current = panelVisibleBounds(candidate);
+    return panelCorners(candidate) === candidate.corners
+      && current.width >= Math.min(76, visible.width) - 0.001 && current.height >= minimumHeight - 0.001
+      && points.every((p, i) => p.x >= PANEL_PADDING - 0.001 && p.y >= PANEL_PADDING - 0.001
+        && (!bounds || p.x <= bounds.width - PANEL_PADDING + 0.001 && p.y <= bounds.height - PANEL_PADDING + 0.001)
+        && Math.hypot(p.x - points[(i + 1) % 4].x, p.y - points[(i + 1) % 4].y) >= minimumEdge - 0.001)
+      && !others.some(other => !initiallyOverlapping.has(other.id) && panelsCollide(candidate, other, 0));
+  };
+  const rawDelta = delta(dy), raw = make(rawDelta), point = worldCorners({ ...panel, ...raw })[index];
+  const target = closest(point.y, pointTargets(point, 'y', others, side, bounds));
+  let movement = target ? delta(target.value - original[index].y) : rawDelta;
+  let result = make(movement);
+  if (!valid(result) && target && valid(raw)) { movement = rawDelta; result = raw; }
+  if (!valid(result)) {
+    let low = 0, high = 1;
+    for (let i = 0; i < 28; i++) {
+      const mid = (low + high) / 2;
+      if (valid(make(movement * mid))) { low = mid; } else { high = mid; }
+    }
+    result = make(movement * low);
+  }
+  const corner = worldCorners({ ...panel, ...result })[index];
+  if (target && Math.abs(corner.y - target.value) < 0.001) { guides?.push({ type: 'horizontal', pos: target.value }); }
+  return result;
+}
+
 function snapPanelResizeFrame(panel: ComicPanel, dx: number, dy: number, side: Side, others: ComicPanel[], bounds?: Bounds, guides?: Guide[]): PanelResizeResult {
   const points = panelCorners(panel);
   const sloped = Math.abs(points[0].x - points[3].x) > 0.0001 || Math.abs(points[1].x - points[2].x) > 0.0001;
@@ -171,32 +225,20 @@ function snapPanelResizeFrame(panel: ComicPanel, dx: number, dy: number, side: S
   if (sloped || expandedInkFrame) {
     const horizontal = resizeSlopedPanel(panel, dx, side, others, bounds, guides);
     if (dy === 0) { return { ...horizontal, resizeInk: true, warpInk: false }; }
-    const resized = { ...panel, ...horizontal }, corners = panelCorners(resized);
-    const corner = corners[side === 'left' ? 3 : 2];
-    if (corner.y < 0.001) { return { ...horizontal, resizeInk: true, warpInk: false }; }
-    const minY = Math.min(...corners.map(p => p.y)), maxY = Math.max(...corners.map(p => p.y));
-    const minimum = Math.min(76, visible.height) / Math.max(0.001, maxY - minY);
-    const maximum = bounds ? (bounds.height - PANEL_PADDING - panel.y) / Math.max(0.001, maxY) : Infinity;
-    const clampHeight = (height: number) => Math.max(minimum, Math.min(maximum, height));
-    let height = clampHeight(panel.height + dy / corner.y);
-    const point = { x: resized.x + corner.x * resized.width, y: panel.y + corner.y * height };
-    const target = closest(point.y, pointTargets(point, 'y', others, side, bounds));
-    if (target) { height = clampHeight((target.value - panel.y) / corner.y); }
-    const initiallyOverlapping = new Set(others.filter(other => panelsCollide(resized, other, 0)).map(other => other.id));
-    const valid = (nextHeight: number) => !others.some(other => !initiallyOverlapping.has(other.id)
-      && panelsCollide({ ...resized, height: nextHeight }, other, 0));
-    if (!valid(height)) {
-      let low = 0, high = 1;
-      for (let i = 0; i < 28; i++) {
-        const mid = (low + high) / 2;
-        if (valid(panel.height + (height - panel.height) * mid)) { low = mid; } else { high = mid; }
+    const vertical = { ...horizontal, ...resizeAlongSlopedSides({ ...panel, ...horizontal }, dy, side, others, bounds, guides) };
+    if (dx !== 0) {
+      // A diagonal drag may finish at a different X after following the side
+      // slope. Resolve horizontal snapping at that final circle position.
+      // Pure vertical drags deliberately leave both top vertices untouched.
+      const candidate = { ...panel, ...vertical }, index = side === 'left' ? 3 : 2;
+      const point = worldCorners(candidate)[index];
+      const target = closest(point.x, pointTargets(point, 'x', others, side, bounds));
+      if (target) {
+        return { ...vertical, ...resizeSlopedPanel(candidate, target.value - point.x, side, others, bounds, guides),
+          resizeInk: true, warpInk: true };
       }
-      height = panel.height + (height - panel.height) * low;
     }
-    if (target && Math.abs(panel.y + corner.y * height - target.value) < 0.001) {
-      guides?.push({ type: 'horizontal', pos: target.value });
-    }
-    return { ...horizontal, height, resizeInk: true, warpInk: false };
+    return vertical;
   }
   const right = panel.x + panel.width;
   let width = Math.max(76, panel.width + (side === 'left' ? -dx : dx));
@@ -257,6 +299,7 @@ function cornerAngleTarget(panel: ComicPanel, side: Side, x: number): number | u
 }
 
 export function reshapePanelPoint(panel: ComicPanel, side: Side, dx: number, others: ComicPanel[] = [], bounds?: Bounds): ShapeUpdate {
+  const minimumEdge = panelMinimumEdgeLength(panel);
   const original = worldCorners(panel), index = side === 'left' ? 3 : 2;
   const point = original[index];
   let targetX = Math.max(PANEL_PADDING, Math.min(bounds ? bounds.width - PANEL_PADDING : Infinity, point.x + dx));
@@ -283,7 +326,7 @@ export function reshapePanelPoint(panel: ComicPanel, side: Side, dx: number, oth
     const candidate = { ...panel, ...update }, points = worldCorners(candidate);
     return panelCorners(candidate) === candidate.corners && points.every((p, i) =>
       p.x >= PANEL_PADDING - 0.001 && (!bounds || p.x <= bounds.width - PANEL_PADDING + 0.001)
-      && Math.hypot(p.x - points[(i + 1) % 4].x, p.y - points[(i + 1) % 4].y) >= Math.min(48, panel.width / 2, panel.height / 2))
+      && Math.hypot(p.x - points[(i + 1) % 4].x, p.y - points[(i + 1) % 4].y) >= minimumEdge - 0.001)
       && !others.some(other => !initiallyOverlapping.has(other.id)
         && panelsCollide(candidate, other, 0));
   };

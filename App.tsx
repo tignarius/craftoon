@@ -28,6 +28,9 @@ import { Header } from './src/components/Header';
 import { Workspace } from './src/components/Workspace';
 import { CanvasPageNavigation } from './src/components/CanvasPageNavigation';
 import { createPanelGrid } from './src/utils/panelGrid';
+import { autoArrangePanels, arrangedPanelFrames, ArrangedPanelFrame } from './src/utils/autoArrangePanels';
+import { reuseCapturedPages } from './src/utils/capturedPages';
+import { lockedArtworkGeometry } from './src/utils/panelArtworkLock';
 import { fitTracingImage, migrateTracingPage, legacyPanelReference } from './src/utils/tracingImage';
 import {
   ComicPage,
@@ -99,6 +102,27 @@ function CraftoonApp(): React.JSX.Element {
   }, [currentPageIndex]);
   const [storyId, setStoryId] = useState(() => `story-${Date.now()}`);
   const [storyTitle, setStoryTitle] = useState('Untitled comic');
+  const arrangeMemory = useRef<{ story: string; pages: Map<string, { width: number; height: number; panels: ArrangedPanelFrame[] }>; inspected: Map<string, string> }>({ story: storyId, pages: new Map(), inspected: new Map() });
+  useEffect(() => {
+    if (arrangeMemory.current.story !== storyId) {
+      arrangeMemory.current = { story: storyId, pages: new Map(), inspected: new Map() };
+    }
+    // Seed already tidy recovered/saved pages before their first manual edit.
+    // Only frame data is remembered: no stroke archives or image bytes.
+    for (const page of pages) {
+      const bounds = pageCanvasSize(page), memory = arrangeMemory.current;
+      const known = memory.pages.get(page.id);
+      if (known?.width === bounds.width && known.height === bounds.height) { continue; }
+      memory.pages.delete(page.id);
+      const frames = arrangedPanelFrames(page.panels), key = JSON.stringify([bounds, frames]);
+      if (memory.inspected.get(page.id) === key) { continue; }
+      memory.inspected.set(page.id, key);
+      if (page.panels.length && autoArrangePanels(page.panels, bounds) === page.panels) {
+        memory.pages.set(page.id, { ...bounds, panels: frames });
+      }
+    }
+  }, [pages, storyId]);
+
   const savingRef = useRef(false);
   const [saveConfirmed, setSaveConfirmed] = useState(false);
   const saveFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -598,6 +622,35 @@ function CraftoonApp(): React.JSX.Element {
     } finally { if (!awaitingChoice) { savingRef.current = false; } }
   };
 
+  const handleAutoArrange = async () => {
+    if (savingRef.current || !currentPage.panels.length) { return; }
+    const targetId = currentPage.id;
+    const bounds = pageCanvasSize(currentPage);
+    const known = arrangeMemory.current.pages.get(targetId);
+    const baseline = known?.width === bounds.width && known.height === bounds.height ? known.panels : undefined;
+    const preview = autoArrangePanels(currentPage.panels, bounds, baseline);
+    // A tidy page needs neither capture, deselection nor a new Undo step.
+    if (preview === currentPage.panels) { return; }
+    savingRef.current = true;
+    try {
+      const captured = reuseCapturedPages(latestPages.current, await storyLibrary.capturePages(latestPages.current));
+      if (activePageId.current !== targetId) { return; }
+      const page = captured.find(item => item.id === targetId);
+      if (!page) { return; }
+      const panels = autoArrangePanels(page.panels, bounds, baseline);
+      if (!panels) {
+        Alert.alert('Not enough space', 'The panels need more room. Use fewer panels or a taller layout, then try again.');
+        return;
+      }
+      arrangeMemory.current.pages.set(targetId, { ...bounds, panels: arrangedPanelFrames(panels) });
+      if (panels === page.panels) { setPages(captured); return; }
+      setPanelModes({});
+      changePages(captured.map(item => item.id === targetId ? { ...item, panels } : item), currentPageIndex, captured);
+    } catch {
+      Alert.alert('Could not arrange panels', 'Your current layout is preserved. Please try again.');
+    } finally { savingRef.current = false; }
+  };
+
   const handleCommitPanelGeometry = async (id: string, updates: Partial<ComicPanel>) => {
     const targetId = currentPage.id;
     try {
@@ -607,8 +660,9 @@ function CraftoonApp(): React.JSX.Element {
       if (targetId !== activePageId.current) { return; }
       const target = captured.find(page => page.id === targetId)?.panels.find(panel => panel.id === id);
       if (!target) { return; }
+      const geometry = lockedArtworkGeometry(target, updates);
       changePages(captured.map(page => page.id === targetId ? { ...page,
-        panels: [...page.panels.filter(panel => panel.id !== id), { ...target, ...updates }],
+        panels: [...page.panels.filter(panel => panel.id !== id), { ...target, ...geometry }],
       } : page), currentPageIndex, captured);
     } catch {
       Alert.alert('Could not update panel', 'Your drawing is preserved. Please try again.');
@@ -950,6 +1004,8 @@ function CraftoonApp(): React.JSX.Element {
             onAddPage={handleAddPage}
             onDeletePage={handleDeletePage}
             onCreateLayout={handleCreateLayout}
+            onAutoArrange={handleAutoArrange}
+            canAutoArrange={currentPage.panels.length > 0}
           />
 
         {/* 만화 작업 영역 (빈 도화지에서 드래그하여 패널 생성, 패널 안 탭 시 바로 드로잉) */}

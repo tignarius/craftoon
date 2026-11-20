@@ -19,6 +19,8 @@ import {
   Glasses,
   Undo2,
   Redo2,
+  PanelsTopLeft,
+  Sparkles,
 } from 'lucide-react-native';
 
 interface HeaderProps {
@@ -45,6 +47,8 @@ interface HeaderProps {
   onAddPage: () => void;
   onDeletePage?: () => void;
   onCreateLayout: (columns: number, rows: number) => void;
+  onAutoArrange?: () => void;
+  canAutoArrange?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -60,7 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
   saveConfirmed = false,
   onPrint,
   onEmail, emailing = false,
-  onCreateLayout,
+  onCreateLayout, onAutoArrange, canAutoArrange = false,
   onPrevPage, onNextPage, onAddPage, onDeletePage,
 }) => {
   const newButton = useRef<View>(null);
@@ -96,6 +100,15 @@ export const Header: React.FC<HeaderProps> = ({
         {!reading && <View style={screenChrome.action}>
           <TemplatePicker onSelect={onCreateLayout} />
         </View>}
+        {!reading && onAutoArrange && <TouchableOpacity accessibilityRole="button" accessibilityLabel="Auto arrange panels"
+          accessibilityHint="Fit panels across the page with template spacing, keeping the occupied height"
+          accessibilityState={{ disabled: !canAutoArrange }} disabled={!canAutoArrange}
+          style={[screenChrome.action, !canAutoArrange && styles.disabledBtn]} onPress={onAutoArrange} activeOpacity={0.7}>
+          <View style={styles.autoArrangeIcon}>
+            <PanelsTopLeft size={22} color="#1ABC9C" style={styles.autoArrangePanels} />
+            <Sparkles size={14} color="#1ABC9C" strokeWidth={2.2} style={styles.autoArrangeMagic} />
+          </View>
+        </TouchableOpacity>}
         {!reading && showHistory && <>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Undo"
             accessibilityState={{ disabled: !canUndo }} disabled={!canUndo}
@@ -115,6 +128,9 @@ export const Header: React.FC<HeaderProps> = ({
 };
 
 const styles = StyleSheet.create({
+  autoArrangeIcon: { width: 22, height: 22 },
+  autoArrangePanels: { position: 'absolute', left: 0, top: 0 },
+  autoArrangeMagic: { position: 'absolute', right: -7, top: -7, backgroundColor: '#FFFFFF', borderRadius: 3 },
   actionGroup: {
     flexDirection: 'row',
     gap: 4,

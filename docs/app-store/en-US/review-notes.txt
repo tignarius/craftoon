@@ -1,0 +1,17 @@
+Craftoon is an iPad comic drawing app. No app account or sign-in is required.
+
+Free access includes up to four pages per comic and one comic saved in Library. Existing saved comics can be edited and saved again.
+
+Craftoon Pro is a one-time, non-consumable In-App Purchase with product ID com.craftoon.pro.unlock. It unlocks unlimited pages and saved comics, PDF email, and printing. This first In-App Purchase must be included with the app version in the submission.
+
+To test the app:
+1. From the start screen, choose Canvas and select Portrait or Landscape.
+2. Drag on the blank page to create a panel, or use the green grid template icon in the canvas toolbar.
+3. Tap a panel to draw with PencilKit. Use the panel mode button for Layout mode to move or resize it. The shape handle reshapes a panel, the border control changes its border style, and the magnifier opens a focused panel view.
+4. In Draw mode, use the image button to import a tracing reference from Photos or Files. Reference visibility, transform, and opacity controls are available after import.
+5. Use Save to name the comic. Library opens saved comics; selecting a cover shows Canvas, Read, and Delete actions.
+6. Tap the mode icon at the top left to open the app menu, which includes the offline Quick Guide, Unlock Pro, Restore purchases, and Enter activation code.
+
+The canvas and reader keep the chosen page orientation. The start screen and Library rotate with the device.
+
+Email requires a configured Mail account, and printing requires an available AirPrint printer.

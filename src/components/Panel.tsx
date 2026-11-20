@@ -11,12 +11,13 @@ import { ComicPanel, PanelMode, TracingImage, PanelCorners, PanelBorderStyle, Pa
 import { TracingImageControls } from './TracingImageControls';
 import Svg, { Polygon } from 'react-native-svg';
 import { PanelSurface } from './PanelSurface';
+import { lockedArtworkGeometry } from '../utils/panelArtworkLock';
 import { PANEL_ICON_SCALE } from './panelIconSizing';
 import { PanelBorderIcon } from './PanelBorderIcon';
 import { PanelCornerHandle } from './PanelCornerHandle';
 import { snapPanelMove, snapPanelResize, PanelSnapGuide, ShapeUpdate } from '../utils/panelSnap';
 import { panelCorners, panelControlLayout, panelHandleSide, panelsCollide, panelRenderedFrame } from '../utils/panelGeometry';
-import { Image as ImageIcon, Move, Pen, Trash2, ZoomIn, ZoomOut } from 'lucide-react-native';
+import { Image as ImageIcon, Move, Pen, Trash2, ZoomIn, ZoomOut, LockKeyhole, LockKeyholeOpen } from 'lucide-react-native';
 import { PencilKitView } from '../../PencilKitView';
 
 const MODE_STYLE = {
@@ -34,6 +35,7 @@ interface PanelProps {
   focused?: boolean;
   onToggleFocus?: () => void;
   onShapeChange?: (id: string, update: ShapeUpdate) => void;
+  onArtworkLockChange?: (id: string, locked: boolean) => void;
   onBorderStyleChange?: (id: string, style: PanelBorderStyle) => void;
   onImportTracingImage?: (panelId: string) => void;
   importingTracingImage?: boolean;
@@ -70,6 +72,7 @@ export const Panel: React.FC<PanelProps> = ({
   onToggleFocus,
   onShapeChange,
   onBorderStyleChange,
+  onArtworkLockChange,
   onImportTracingImage,
   importingTracingImage = false,
   stackOrder = 0,
@@ -102,10 +105,11 @@ export const Panel: React.FC<PanelProps> = ({
   const [resizingSide, setResizingSide] = useState<'left' | 'right' | null>(null);
   useEffect(() => { setGeometryPreview(null); }, [storedPanel.x, storedPanel.y, storedPanel.width, storedPanel.height, storedPanel.corners, mode]);
   useEffect(() => { setShapePreview(null); }, [storedPanel.corners, mode]);
-  const panel = { ...storedPanel, ...geometryPreview, ...shapePreview };
+  const geometryUpdates = { ...geometryPreview, ...shapePreview };
+  const panel = { ...storedPanel, ...lockedArtworkGeometry(storedPanel, geometryUpdates) };
   const corners = panelCorners(panel);
   const previewingShape = shapePreview !== null || geometryPreview !== null;
-  const nativeShapeFrame = useMemo(() => ({ x: panel.x, width: panel.width - 4, height: panel.height - 4,
+  const nativeShapeFrame = useMemo(() => ({ x: panel.x, y: panel.y, artworkLocked: panel.artworkLocked ?? false, width: panel.width - 4, height: panel.height - 4,
     revision: panel.shapeRevision ?? 0, preview: previewingShape, resizeInk: panel.resizeInk ?? false,
     warpInk: panel.warpInk ?? false, corners,
     contentBounds: {
@@ -114,7 +118,7 @@ export const Panel: React.FC<PanelProps> = ({
       width: (Math.max(...corners.map(p => p.x)) - Math.min(...corners.map(p => p.x))) * (panel.width - 4),
       height: (Math.max(...corners.map(p => p.y)) - Math.min(...corners.map(p => p.y))) * (panel.height - 4),
     } }),
-    [panel.x, panel.width, panel.height, panel.shapeRevision, panel.resizeInk, panel.warpInk, corners, previewingShape]);
+    [panel.x, panel.y, panel.artworkLocked, panel.width, panel.height, panel.shapeRevision, panel.resizeInk, panel.warpInk, corners, previewingShape]);
   const shapePoints = corners.map(p => `${2 + p.x * (panel.width - 4)},${2 + p.y * (panel.height - 4)}`).join(' ');
   const handleSide = resizingSide ?? (reshaping ? reshapingSideRef.current : panelHandleSide(panel, otherPanels));
   const handleIndex = handleSide === 'left' ? 3 : 2;
@@ -126,7 +130,7 @@ export const Panel: React.FC<PanelProps> = ({
   };
   const resizeStartRef = useRef(panel);
   const resizeSideRef = useRef(handleSide);
-  const toolbar = panelControlLayout({ ...panel, corners });
+  const toolbar = panelControlLayout({ ...panel, corners }, mode === 'layout' && onArtworkLockChange ? 4 : 3, PANEL_ICON_SCALE);
   const visualButtonSize = toolbar.buttonSize * PANEL_ICON_SCALE;
   const buttonDimensions = { width: visualButtonSize, height: visualButtonSize, borderRadius: visualButtonSize / 2 };
   const touchPadding = (toolbar.buttonSize - visualButtonSize) / 2;
@@ -414,6 +418,23 @@ export const Panel: React.FC<PanelProps> = ({
             hitSlop={iconHitSlop} accessibilityLabel={`Panel border: ${borderStyle}`} accessibilityState={{ expanded: borderMenu }}
             onPress={() => setBorderMenu(value => !value)} style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder }]}>
             <PanelBorderIcon value={borderStyle} size={iconSize} color={styleConfig.icon} />
+          </TouchableOpacity>}
+          {mode === 'layout' && onArtworkLockChange && <TouchableOpacity accessibilityRole="button"
+            accessibilityLabel={panel.artworkLocked ? 'Unlock artwork' : 'Lock artwork'}
+            accessibilityHint="Keep artwork fixed while moving, resizing or reshaping this panel"
+            accessibilityState={{ selected: !!panel.artworkLocked }}
+            onPress={() => onArtworkLockChange(panel.id, !panel.artworkLocked)}
+            activeOpacity={0.9} hitSlop={iconHitSlop}
+            style={[styles.circleButton, buttonDimensions, { borderColor: styleConfig.buttonBorder,
+              backgroundColor: panel.artworkLocked ? styleConfig.icon : '#FFFFFF' }]}>
+            <View style={{ width: iconSize, height: iconSize }}>
+              <ImageIcon size={iconSize * 0.8} color={panel.artworkLocked ? '#FFFFFF' : styleConfig.icon} strokeWidth={2.2} />
+              {panel.artworkLocked
+                ? <LockKeyhole size={iconSize * 0.55} color="#FFFFFF" strokeWidth={2.6}
+                    style={{ position: 'absolute', right: -1, bottom: -1, backgroundColor: styleConfig.icon, borderRadius: 2 }} />
+                : <LockKeyholeOpen size={iconSize * 0.55} color={styleConfig.icon} strokeWidth={2.6}
+                    style={{ position: 'absolute', right: -1, bottom: -1, backgroundColor: '#FFFFFF', borderRadius: 2 }} />}
+            </View>
           </TouchableOpacity>}
           {mode === 'draw' && onToggleFocus && <TouchableOpacity accessibilityRole="button"
             activeOpacity={0.9}

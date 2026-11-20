@@ -10,6 +10,8 @@ export function mergeGeometryInk(pages: ComicPage[], id: string, drawingData: st
     let pageChanged = false;
     const panels = page.panels.map(panel => {
       if (panel.id !== id || panel.drawingData === drawingData
+        || (geometry.x !== undefined && Math.abs(panel.x - geometry.x) > 0.001)
+        || (geometry.y !== undefined && Math.abs(panel.y - geometry.y) > 0.001)
         || (panel.drawingData ?? '') !== (geometry.sourceDrawingData ?? '')
         || Math.abs(panel.width - 4 - geometry.width) > 0.001
         || Math.abs(panel.height - 4 - geometry.height) > 0.001

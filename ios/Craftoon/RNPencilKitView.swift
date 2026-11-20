@@ -103,14 +103,30 @@ enum CraftoonInkShapeWarp {
     let height = old[3].y - old[0].y
     guard abs(height) > 0.001 else { return p }
     let v = (p.y - old[0].y) / height
-    let left = old[0].x + (old[3].x - old[0].x) * v
-    let right = old[1].x + (old[2].x - old[1].x) * v
+    // Raw PencilKit strokes can continue outside the visible mask. Extending
+    // a trapezoid's side lines there reaches a zero-width vanishing point;
+    // division by that width can turn a 4pt pen into a page-sized black blob.
+    // Use the nearest end width outside the panel, retaining outside ink and
+    // an invertible vertical mapping without the projective singularity.
+    let edgeV = max(0, min(1, v))
+    let left = old[0].x + (old[3].x - old[0].x) * edgeV
+    let right = old[1].x + (old[2].x - old[1].x) * edgeV
     guard abs(right - left) > 0.001 else { return p }
     let u = (p.x - left) / (right - left)
-    let newLeft = next[0].x + (next[3].x - next[0].x) * v
-    let newRight = next[1].x + (next[2].x - next[1].x) * v
+    let newLeft = next[0].x + (next[3].x - next[0].x) * edgeV
+    let newRight = next[1].x + (next[2].x - next[1].x) * edgeV
     return CGPoint(x: newLeft + (newRight - newLeft) * u,
                    y: next[0].y + (next[3].y - next[0].y) * v)
+  }
+
+  private static func brushStretch(at p: CGPoint, from old: [CGPoint], to next: [CGPoint]) -> CGSize {
+    let oldHeight = old[3].y - old[0].y, newHeight = next[3].y - next[0].y
+    guard abs(oldHeight) > 0.001 else { return CGSize(width: 1, height: 1) }
+    let v = max(0, min(1, (p.y - old[0].y) / oldHeight))
+    let oldWidth = (old[1].x - old[0].x) * (1 - v) + (old[2].x - old[3].x) * v
+    let newWidth = (next[1].x - next[0].x) * (1 - v) + (next[2].x - next[3].x) * v
+    guard abs(oldWidth) > 0.001 else { return CGSize(width: 1, height: 1) }
+    return CGSize(width: abs(newWidth / oldWidth), height: abs(newHeight / oldHeight))
   }
 
   static func drawing(_ drawing: PKDrawing, from old: [CGPoint], to next: [CGPoint]) -> PKDrawing {
@@ -119,10 +135,14 @@ enum CraftoonInkShapeWarp {
       let map: (CGPoint) -> CGPoint = { point($0.applying(stroke.transform), from: old, to: next) }
       let controlPoints = stroke.path.map { sample -> PKStrokePoint in
         let location = map(sample.location)
-        let horizontal = map(CGPoint(x: sample.location.x + sample.size.width, y: sample.location.y))
-        let vertical = map(CGPoint(x: sample.location.x, y: sample.location.y + sample.size.height))
-        let size = CGSize(width: hypot(horizontal.x - location.x, horizontal.y - location.y),
-                          height: hypot(vertical.x - location.x, vertical.y - location.y))
+        let stretch = brushStretch(at: sample.location.applying(stroke.transform), from: old, to: next)
+        // Moving a side introduces horizontal shear as Y changes. That motion
+        // belongs to the path, not the nib height. Measuring it with hypot and
+        // then treating it as a vertical nib on the next edit repeatedly fattens
+        // the brush, even when the outline is returned to its original shape.
+        let t = stroke.transform
+        let size = CGSize(width: sample.size.width * hypot(t.a * stretch.width, t.b * stretch.height),
+                          height: sample.size.height * hypot(t.c * stretch.width, t.d * stretch.height))
         if #available(iOS 17.0, *) {
           return PKStrokePoint(location: location, timeOffset: sample.timeOffset, size: size,
             opacity: sample.opacity, force: sample.force, azimuth: sample.azimuth, altitude: sample.altitude,
@@ -156,6 +176,55 @@ enum CraftoonInkShapeWarp {
       return PKStroke(ink: stroke.ink, path: path, transform: .identity, mask: mask)
     }
     return PKDrawing(strokes: strokes)
+  }
+}
+
+// Match the actual displayed pixels instead of capping every panel at 1200px.
+// Bound each bitmap's memory, with a little reserve only for the selected
+// resize preview so a live drag does not repeatedly re-warp thousands of strokes.
+enum CraftoonInkPreviewRaster {
+  static let maximumEdge: CGFloat = 4096
+  static let maximumPixels: CGFloat = 6_000_000
+  static func scale(source: CGSize, displayed: CGSize, screenScale: CGFloat, resizing: Bool) -> CGFloat {
+    guard [source.width, source.height, displayed.width, displayed.height, screenScale]
+      .allSatisfy({ $0.isFinite && $0 > 0 }) else { return 1 }
+    let required = max(displayed.width / source.width, displayed.height / source.height)
+      * screenScale * (resizing ? 1.25 : 1)
+    let requested = ceil(required * 2) / 2
+    return min(requested, maximumEdge / max(source.width, source.height),
+      sqrt(maximumPixels / (source.width * source.height)))
+  }
+}
+
+// Reuse one vector-derived raster during a drag. Horizontal projective strips
+// follow the same tapered-side mapping as the final stroke warp; no pixel
+// buffers or PencilKit stroke archives are rebuilt for each pointer movement.
+enum CraftoonInkPreviewWarp {
+  static let stripCount = 64
+  static func transform(from old: [CGPoint], to next: [CGPoint], y: CGFloat, height: CGFloat) -> CATransform3D? {
+    guard old.count == 4, next.count == 4, height > 0, old[3].y - old[0].y > 0.001 else { return nil }
+    func span(_ at: CGFloat) -> (CGPoint, CGPoint) {
+      let v = max(0, min(1, (at - old[0].y) / (old[3].y - old[0].y)))
+      return (CGPoint(x: old[0].x + (old[3].x - old[0].x) * v, y: at),
+        CGPoint(x: old[1].x + (old[2].x - old[1].x) * v, y: at))
+    }
+    let (a, b) = span(y), (c, d) = span(y + height)
+    let aa = CraftoonInkShapeWarp.point(a, from: old, to: next), bb = CraftoonInkShapeWarp.point(b, from: old, to: next)
+    let cc = CraftoonInkShapeWarp.point(c, from: old, to: next), dd = CraftoonInkShapeWarp.point(d, from: old, to: next)
+    let sourceTop = b.x - a.x, sourceBottom = d.x - c.x
+    let targetTop = bb.x - aa.x, targetBottom = dd.x - cc.x
+    guard min(sourceTop, sourceBottom, targetTop, targetBottom) > 0.001 else { return nil }
+    let scaleX = targetTop / sourceTop
+    let denominator = scaleX * sourceBottom / targetBottom
+    let tx = aa.x - scaleX * a.x
+    var t = CATransform3DIdentity
+    t.m11 = scaleX
+    t.m21 = (cc.x * denominator - scaleX * c.x - tx) / height
+    t.m41 = tx
+    t.m22 = (cc.y * denominator - aa.y) / height
+    t.m42 = aa.y
+    t.m24 = (denominator - 1) / height
+    return [t.m11, t.m21, t.m41, t.m22, t.m42, t.m24].allSatisfy(\.isFinite) ? t : nil
   }
 }
 
@@ -317,9 +386,16 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   static func restoreVisibleDrawings(_ pages: [[String: Any]]? = nil) {
     for view in views.allObjects where CraftoonInkStore.documentPanelIDs?.contains(view.panelId) == true {
       view.liveCanvas?.undoManager?.removeAllActions()
+      // Explicit Undo/open owns the restored version. Cancel older native
+      // geometry/render completions before accepting its drawing references.
+      view.syncTimer?.invalidate()
+      view.drawingRevision += 1
+      view.previewRevision += 1
+      view.pendingGeometrySource = nil
+      view.geometryInputReferences.removeAll()
       if let target = pages?.flatMap({ $0["panels"] as? [[String: Any]] ?? [] }).first(where: { $0["id"] as? String == view.panelId }),
          let x = target["x"] as? NSNumber, let width = target["width"] as? NSNumber, let height = target["height"] as? NSNumber {
-        view.restoredShapeFrame = (x: CGFloat(truncating: x), width: CGFloat(truncating: width) - 4,
+        view.restoredShapeFrame = (x: CGFloat(truncating: x), y: (target["y"] as? NSNumber)?.doubleValue ?? 0, width: CGFloat(truncating: width) - 4,
           height: CGFloat(truncating: height) - 4, revision: (target["shapeRevision"] as? NSNumber)?.intValue ?? 0, preview: false)
       }
       let value = CraftoonInkStore.latestReferences[view.panelId] ?? ""
@@ -480,6 +556,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     didSet {
       guard renderScale != oldValue else { return }
       setNeedsLayout()
+      if !isDrawingActive { schedulePreview() }
       if CraftoonStrokeDiagnostics.enabled {
         let sequence = Self.diagnosticSequence
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
@@ -519,6 +596,8 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     if canvas.pinchGestureRecognizer?.isEnabled == true { canvas.pinchGestureRecognizer?.isEnabled = false }
   }
   private let previewView = UIImageView()
+  private var previewWarpView: UIView?
+  private var previewWarpStrips: [CALayer] = []
   private let inkPolygonMask = CAShapeLayer()
   private var maskedInkBounds: CGRect?
   private var maskedInkPoints: [CGPoint] = []
@@ -632,6 +711,8 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
       syncTimer?.invalidate()
       drawingRevision += 1
       lastEmittedDrawingData = nil
+      pendingGeometrySource = nil
+      geometryInputReferences.removeAll()
       loadDrawing()
     }
   }
@@ -642,6 +723,15 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
       // can erase a newer stroke and restart PencilKit's live renderer.
       guard drawingData != oldValue,
             drawingData != lastEmittedDrawingData else { return }
+      // A geometry commit may arrive before its captured source prop. That
+      // late source must not bind the transformed cache to an older immutable
+      // file (or reinstall that older drawing). Explicit restore clears this.
+      if geometryInputReferences.contains(drawingData) { return }
+      // capturePages can assign an immutable reference before its JS prop echo.
+      // That reference already names the cached drawing; reinstalling it would
+      // reset the active renderer or invalidate every inactive preview at once.
+      if !panelId.isEmpty, drawingData == CraftoonInkStore.latestReferences[panelId],
+         RNPencilKitView.drawingCache[panelId] != nil { return }
       if !isDrawingActive, liveCanvas == nil {
         if !panelId.isEmpty { CraftoonInkStore.latestReferences[panelId] = drawingData.isEmpty ? nil : drawingData }
         inkSize = bounds.size
@@ -865,6 +955,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
         if self.canvasAwaitingRender === canvasView, self.window != nil {
           self.canvasAwaitingRender = nil
           self.previewView.isHidden = true
+          self.previewWarpView?.isHidden = true
         }
       }
     }
@@ -876,6 +967,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   private var drawingRevision = 0
   private var lastEmittedDrawingData: String?
   private var pendingGeometrySource: String?
+  private var geometryInputReferences: [String] = []
   private var savedDrawingTool: PKTool?
 
   deinit {
@@ -908,7 +1000,12 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
         "geometryChange": geometryChange, "strokeCount": drawing.strokes.count])
     }
     if geometryChange {
-      if pendingGeometrySource == nil { pendingGeometrySource = drawingData }
+      let source = CraftoonInkStore.latestReferences[panelId] ?? drawingData
+      if pendingGeometrySource == nil { pendingGeometrySource = source }
+      if !source.isEmpty, !geometryInputReferences.contains(source) {
+        geometryInputReferences.append(source)
+        if geometryInputReferences.count > 16 { geometryInputReferences.removeFirst() }
+      }
     } else { pendingGeometrySource = nil }
     syncTimer?.invalidate()
     drawingRevision += 1
@@ -990,7 +1087,8 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
       let capture = CraftoonInkStore.capture([["panels": [["id": panelId]]]])
       var geometry: [String: Any]?
       if let source = self.pendingGeometrySource {
-        geometry = ["width": self.shapeFrame["width"] ?? self.bounds.width,
+        geometry = ["x": self.shapeFrame["x"] ?? 0, "y": self.shapeFrame["y"] ?? 0,
+                    "width": self.shapeFrame["width"] ?? self.bounds.width,
                     "height": self.shapeFrame["height"] ?? self.bounds.height,
                     "corners": self.shapeFrame["corners"] ?? [], "sourceDrawingData": source]
       }
@@ -1024,8 +1122,99 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
   // Geometry previews may extend the panel's frame without resizing artwork.
   // Track that separately from normal circle resizing and ordinary panel moves.
   @objc var shapeFrame: NSDictionary = [:] { didSet { if !shapeFrame.isEqual(oldValue) { setNeedsLayout() } } }
-  private var appliedShapeFrame: (x: CGFloat, width: CGFloat, height: CGFloat, revision: Int, preview: Bool)?
-  private var restoredShapeFrame: (x: CGFloat, width: CGFloat, height: CGFloat, revision: Int, preview: Bool)?
+  private var appliedShapeFrame: (x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat, revision: Int, preview: Bool)?
+  private var restoredShapeFrame: (x: CGFloat, y: CGFloat, width: CGFloat, height: CGFloat, revision: Int, preview: Bool)?
+  private var appliedArtworkPosition: CGPoint?
+  private var previewArtworkPosition: CGPoint?
+  private var previewSourceSize: CGSize?
+  private var previewInkCorners: [CGPoint]?
+  private var previewWarpSourceCorners: [CGPoint]?
+  private var artworkPosition: CGPoint {
+    CGPoint(x: (shapeFrame["x"] as? NSNumber)?.doubleValue ?? 0,
+            y: (shapeFrame["y"] as? NSNumber)?.doubleValue ?? 0)
+  }
+  private var artworkLocked: Bool { (shapeFrame["artworkLocked"] as? NSNumber)?.boolValue ?? false }
+
+  private func layoutArtworkPreview() {
+    guard let image = previewView.image else { previewWarpView?.isHidden = true; previewView.frame = bounds; return }
+    let size = previewSourceSize ?? image.size, origin = artworkPosition
+    if artworkLocked {
+      previewWarpView?.isHidden = true
+      let position = previewArtworkPosition ?? origin
+      previewView.frame = CGRect(x: position.x - origin.x, y: position.y - origin.y, width: size.width, height: size.height)
+      if !isDrawingActive { previewView.isHidden = false }
+      return
+    }
+    let target = CraftoonPanelShape.points(shapeFrame["corners"]).map {
+      CGPoint(x: $0.x * ((shapeFrame["width"] as? NSNumber)?.doubleValue ?? bounds.width),
+              y: $0.y * ((shapeFrame["height"] as? NSNumber)?.doubleValue ?? bounds.height))
+    }
+    if (shapeFrame["preview"] as? NSNumber)?.boolValue == true, let baseline = appliedInkCorners {
+      let position = previewArtworkPosition ?? origin, base = appliedArtworkPosition ?? origin
+      previewWarpSourceCorners = baseline.map { CGPoint(x: $0.x - position.x + base.x, y: $0.y - position.y + base.y) }
+    }
+    let source = previewWarpSourceCorners ?? previewInkCorners ?? target
+    let changed = zip(source, target).contains { pair in hypot(pair.0.x - pair.1.x, pair.0.y - pair.1.y) > 0.001 }
+    let showPreview = !isDrawingActive || canvasAwaitingRender != nil
+    if changed, showPreview, (shapeFrame["warpInk"] as? NSNumber)?.boolValue == true,
+       showWarpedPreview(image, size: size, from: source, to: target) {
+      previewView.isHidden = true
+      return
+    }
+    previewWarpView?.isHidden = true
+    if !changed { previewWarpStrips.forEach { $0.contents = nil } }
+    if changed, (shapeFrame["resizeInk"] as? NSNumber)?.boolValue == true {
+      let a = source.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+      let b = target.reduce(CGRect.null) { $0.union(CGRect(origin: $1, size: .zero)) }
+      if a.width > 0.001, a.height > 0.001 {
+        let sx = b.width / a.width, sy = b.height / a.height
+        previewView.frame = CGRect(x: b.minX - a.minX * sx, y: b.minY - a.minY * sy, width: size.width * sx, height: size.height * sy)
+      } else { previewView.frame = bounds }
+    } else { previewView.frame = bounds }
+    if !isDrawingActive { previewView.isHidden = false }
+  }
+
+  private func showWarpedPreview(_ image: UIImage, size: CGSize, from old: [CGPoint], to next: [CGPoint]) -> Bool {
+    guard let cgImage = image.cgImage, size.width > 0, size.height > 0 else { return false }
+    let count = CraftoonInkPreviewWarp.stripCount, stripHeight = size.height / CGFloat(count)
+    let transforms = (0..<count).compactMap { CraftoonInkPreviewWarp.transform(from: old, to: next,
+      y: CGFloat($0) * stripHeight, height: stripHeight) }
+    guard transforms.count == count else { return false }
+    let host: UIView
+    if let existing = previewWarpView { host = existing }
+    else {
+      host = UIView(frame: bounds)
+      host.isOpaque = false
+      host.backgroundColor = .clear
+      host.isUserInteractionEnabled = false
+      host.accessibilityIdentifier = "craftoon-ink-warp-preview"
+      addSubview(host)
+      previewWarpView = host
+      previewWarpStrips = (0..<count).map { _ in
+        let strip = CALayer()
+        strip.anchorPoint = .zero
+        strip.position = .zero
+        strip.edgeAntialiasingMask = []
+        host.layer.addSublayer(strip)
+        return strip
+      }
+    }
+    CATransaction.begin()
+    CATransaction.setDisableActions(true)
+    host.frame = bounds
+    for (i, strip) in previewWarpStrips.enumerated() {
+      strip.bounds = CGRect(x: 0, y: 0, width: size.width, height: stripHeight)
+      strip.contents = cgImage
+      strip.contentsScale = image.scale
+      strip.contentsRect = CGRect(x: 0, y: CGFloat(i) / CGFloat(count), width: 1, height: 1 / CGFloat(count))
+      strip.transform = transforms[i]
+    }
+    host.isHidden = false
+    bringSubviewToFront(host)
+    CATransaction.commit()
+    return true
+  }
+
   private var appliedContentBounds: CGRect?
   private var appliedInkCorners: [CGPoint]?
 
@@ -1035,7 +1224,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     guard let xValue = shapeFrame["x"] as? NSNumber,
           let widthValue = shapeFrame["width"] as? NSNumber,
           let heightValue = shapeFrame["height"] as? NSNumber else { return false }
-    let next = (x: CGFloat(truncating: xValue), width: CGFloat(truncating: widthValue), height: CGFloat(truncating: heightValue),
+    let next = (x: CGFloat(truncating: xValue), y: artworkPosition.y, width: CGFloat(truncating: widthValue), height: CGFloat(truncating: heightValue),
       revision: (shapeFrame["revision"] as? NSNumber)?.intValue ?? 0,
       preview: (shapeFrame["preview"] as? NSNumber)?.boolValue ?? false)
     let content = shapeFrame["contentBounds"] as? [String: NSNumber]
@@ -1046,12 +1235,13 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
       CGPoint(x: $0.x * next.width, y: $0.y * next.height)
     }
     if let restored = restoredShapeFrame {
-      guard abs(next.x - restored.x) < 0.01, abs(next.width - restored.width) < 0.01,
+      guard abs(next.x - restored.x) < 0.01, abs(next.y - restored.y) < 0.01, abs(next.width - restored.width) < 0.01,
             abs(next.height - restored.height) < 0.01, next.revision == restored.revision,
             abs(bounds.width - restored.width) <= layoutPixelTolerance,
             abs(bounds.height - restored.height) <= layoutPixelTolerance else { return true }
       // Undo/open already supplied ink archived in this coordinate frame.
       appliedShapeFrame = restored
+      appliedArtworkPosition = artworkPosition
       appliedContentBounds = nextContent
       appliedInkCorners = nextCorners
       restoredShapeFrame = nil
@@ -1059,6 +1249,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
       return true
     }
     let previous = appliedShapeFrame
+    let previousPosition = appliedArtworkPosition
     let reshaping = next.preview || previous?.preview == true || (previous != nil && previous?.revision != next.revision)
     // Fabric can deliver frame/props in separate steps. Never scale the ink
     // against an intermediate frame while a shape update is still pending.
@@ -1066,14 +1257,30 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     // rejects ordinary fractional drags forever, skipping every ink update.
     guard abs(bounds.width - next.width) <= layoutPixelTolerance,
           abs(bounds.height - next.height) <= layoutPixelTolerance else { return true }
-    // Arrow drags preview only the border. Keep the original ink/geometry
+    // Arrow drags warp the cached raster for display. Keep the original ink/geometry
     // baseline and perform the expensive stroke warp once on release.
-    if next.preview, shapeFrame["warpInk"] != nil { return true }
+    if next.preview, artworkLocked || shapeFrame["warpInk"] != nil { return true }
     appliedShapeFrame = next
+    appliedArtworkPosition = artworkPosition
     let previousContent = appliedContentBounds
     appliedContentBounds = nextContent
     let previousCorners = appliedInkCorners
     appliedInkCorners = nextCorners
+    if artworkLocked {
+      inkSize = bounds.size
+      if let previousPosition {
+        let offset = CGPoint(x: previousPosition.x - artworkPosition.x, y: previousPosition.y - artworkPosition.y)
+        if abs(offset.x) > 0.000001 || abs(offset.y) > 0.000001 {
+          let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
+            ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[panelId] ?? drawingData) ?? PKDrawing()
+          applyDrawing(drawing.transformed(using: CGAffineTransform(translationX: offset.x, y: offset.y)), geometryChange: true)
+          scheduleDrawingSync()
+          CraftoonDraftRecovery.shared.scheduleSave()
+        }
+      }
+      // Preserve the full editable drawing, even when the new border crops it.
+      return true
+    }
     if (shapeFrame["warpInk"] as? NSNumber)?.boolValue == true,
        previous != nil, let previousCorners, previousCorners != nextCorners {
       let drawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
@@ -1143,13 +1350,25 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     previewTimer?.invalidate()
     let capture = CraftoonInkStore.capture([["panels": [["id": panelId]]]])
     let reference = (capture.pages.first?["panels"] as? [[String: Any]])?.first?["drawingData"] as? String ?? ""
-    let rect = CGRect(origin: .zero, size: bounds.size)
-    let key = reference + "-\(rect.size)"
+    let resizing = (shapeFrame["preview"] as? NSNumber)?.boolValue == true
+    // During a drag the stored drawing is still in its pre-drag coordinates.
+    // Render that vector source once at sufficient resolution, then reuse it;
+    // never crop it into the moving bounds or scale an already rasterized image.
+    let sourceSize = resizing ? appliedShapeFrame.map { CGSize(width: $0.width, height: $0.height) } ?? bounds.size : bounds.size
+    let rect = CGRect(origin: .zero, size: sourceSize)
+    let displayed = window.map { convert(bounds, to: $0).size } ?? bounds.size
+    let scale = CraftoonInkPreviewRaster.scale(source: sourceSize, displayed: displayed,
+      screenScale: window?.screen.scale ?? UIScreen.main.scale, resizing: resizing)
+    let previewPosition = resizing ? (appliedArtworkPosition ?? artworkPosition) : artworkPosition
+    let sourceCorners = appliedInkCorners ?? CraftoonPanelShape.points(shapeFrame["corners"]).map { CGPoint(x: $0.x * rect.width, y: $0.y * rect.height) }
+    let key = reference + "-\(rect.size)-\(scale)"
     if previewKey == key {
       // No ink changed since this preview. It is safe to reuse it, but the
       // inactive live renderer must still be released after becoming visible.
       UIView.performWithoutAnimation {
-        previewView.isHidden = false
+        previewInkCorners = sourceCorners
+        previewWarpSourceCorners = nil
+        layoutArtworkPreview()
         releaseCanvas()
       }
       persistPreview(capture, reference: reference, panel: panelId)
@@ -1158,7 +1377,6 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     let liveDrawing = liveCanvas?.drawing ?? RNPencilKitView.drawingCache[panelId]
     let revision = previewRevision
     let id = panelId
-    let scale = min(UIScreen.main.scale, 1200 / max(rect.width, rect.height, 1))
     Self.previewQueue.async { [weak self] in
         // Display does not wait behind document compression or disk saves.
         // Keep the value cached until the separate archive write is durable.
@@ -1173,7 +1391,11 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
           guard let self, !self.isDrawingActive, self.panelId == id, self.previewRevision == revision else { return }
           UIView.performWithoutAnimation {
             self.previewView.image = image
-            self.previewView.isHidden = false
+            self.previewArtworkPosition = previewPosition
+            self.previewSourceSize = rect.size
+            self.previewInkCorners = sourceCorners
+            self.previewWarpSourceCorners = nil
+            self.layoutArtworkPreview()
             self.previewKey = key
             self.releaseCanvas()
           }
@@ -1206,7 +1428,7 @@ class RNPencilKitView: UIView, PKCanvasViewDelegate, PKToolPickerObserver {
     super.layoutSubviews()
     updateInkPolygonMask()
     inkPolygonMask.contentsScale = (window?.screen.scale ?? UIScreen.main.scale) * inkRenderScale
-    previewView.frame = bounds
+    layoutArtworkPreview()
     if let canvas = liveCanvas {
       layoutInkCanvas(canvas)
     }

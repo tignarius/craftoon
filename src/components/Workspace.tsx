@@ -278,6 +278,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
             onToggleFocus={() => setFocusedPanelId(focusedPanelId === panel.id ? null : panel.id)}
             onShapeChange={(id, update) => onCommitPanelGeometry(id, update)}
             onBorderStyleChange={(id, borderStyle) => onUpdatePanel(id, { borderStyle })}
+            onArtworkLockChange={(id, artworkLocked) => onCommitPanelGeometry(id, { artworkLocked })}
             mode={panelModes[panel.id]}
             otherPanels={panels.filter((p) => p.id !== panel.id)}
             sheetBounds={sheetBounds}

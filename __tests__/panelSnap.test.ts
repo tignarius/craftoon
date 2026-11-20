@@ -172,11 +172,16 @@ test.each([
   expect(angle(points)).toBeCloseTo(angle(old), 10);
 });
 
-test('a vertical-only circle drag resizes a sloping box while preserving its horizontal shape', () => {
+test('a vertical-only circle drag fixes the top and follows both original side angles', () => {
   const result = snapPanelResize(left, 0, -200, 'right', [], bounds);
-  expect(result.width).toBe(left.width);
   expect(result.height).toBe(left.height - 200);
-  expect(renderedCorners({ ...left, ...result }).map(p => p.x)).toEqual(renderedCorners(left).map(p => p.x));
+  const before = renderedCorners(left), after = renderedCorners({ ...left, ...result });
+  expect(after[0]).toEqual(before[0]); expect(after[1]).toEqual(before[1]);
+  for (const [top, bottom] of [[0, 3], [1, 2]]) {
+    expect(after[bottom].y).toBeCloseTo(before[bottom].y - 200);
+    expect((after[bottom].x - after[top].x) / (after[bottom].y - after[top].y))
+      .toBeCloseTo((before[bottom].x - before[top].x) / (before[bottom].y - before[top].y), 10);
+  }
 });
 
 test('a shape point keeps its final convex form at the limit instead of resetting to a rectangle', () => {
@@ -265,8 +270,12 @@ test.each(['left', 'right'] as const)('the %s circle resizes a sloping panel dia
   expect(after[1].y).toBe(before[1].y);
   expect(after[2].y).toBe(before[2].y + 100);
   expect(after[3].y).toBe(before[3].y + 100);
-  const moved = side === 'left' ? [0, 3] : [1, 2];
-  for (const i of moved) { expect(after[i].x).toBeCloseTo(before[i].x + (side === 'left' ? -40 : 40)); }
+  const movedTop = side === 'left' ? 0 : 1;
+  expect(after[movedTop].x).toBeCloseTo(before[movedTop].x + (side === 'left' ? -40 : 40));
+  for (const [top, bottom] of [[0, 3], [1, 2]]) {
+    expect((after[bottom].x - after[top].x) / (after[bottom].y - after[top].y))
+      .toBeCloseTo((before[bottom].x - before[top].x) / (before[bottom].y - before[top].y), 10);
+  }
 });
 
 test('vertical sloping resize stops at the canvas edge and at the latest neighboring polygon', () => {
@@ -278,4 +287,47 @@ test('vertical sloping resize stops at the canvas edge and at the latest neighbo
   expect(panelsCollide(panelRenderedFrame({ ...left, ...stopped }), panelRenderedFrame(below), 0)).toBe(false);
   const smaller = snapPanelResize(left, 0, -3000, 'right', [], bounds);
   expect(smaller.height).toBe(80);
+});
+
+test('auto-arranged trapezoids with a short top edge remain editable by both gizmos', () => {
+  const left: ComicPanel = { id: 'short-left', x: 12, y: 12, width: 800, height: 480,
+    corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.05, y: 1 }, { x: 0, y: 1 }] };
+  const gap = 16 * Math.hypot(1, 760 / 480);
+  const x = 52 + gap, width = 888 - x;
+  const right: ComicPanel = { id: 'short-right', x, y: 12, width, height: 480,
+    corners: [{ x: 760 / width, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }] };
+  const reshaped = reshapePanelPoint(right, 'left', 80, [left], bounds);
+  const original = worldCorners(right), changed = worldCorners({ ...right, ...reshaped });
+  expect(changed[3].x).toBeGreaterThan(original[3].x + 40);
+  expect(changed[0]).toEqual(original[0]);
+  expect(panelsCollide({ ...right, ...reshaped }, left, 0)).toBe(false);
+  const resized = snapPanelResize(right, -40, 0, 'left', [left], bounds);
+  expect(worldCorners({ ...right, ...resized })[3].x).toBeLessThan(original[3].x);
+  const vertical = snapPanelResize(right, 0, -60, 'left', [], bounds);
+  expect(vertical.height).toBeLessThan(right.height - 40);
+});
+
+
+test('shrinking a narrow-top box follows the neighboring slope and preserves its gutter, then grows back', () => {
+  const leftBox: ComicPanel = { id: 'slope-neighbor', x: 12, y: 12, width: 800, height: 480,
+    corners: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0.05, y: 1 }, { x: 0, y: 1 }] };
+  const gap = 16 * Math.hypot(1, 760 / 480), x = 52 + gap, width = 888 - x;
+  const subject: ComicPanel = { id: 'narrow-top', x, y: 12, width, height: 480,
+    corners: [{ x: 760 / width, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }] };
+  const before = renderedCorners(subject), neighbor = renderedCorners(leftBox);
+  const update = snapPanelResize(subject, 0, -120, 'left', [leftBox], bounds);
+  const smaller = { ...subject, ...update }, after = renderedCorners(smaller);
+  expect(after[0]).toEqual(before[0]); expect(after[1]).toEqual(before[1]);
+  expect(update.height).toBe(subject.height - 120);
+  expect(after[3].x).toBeGreaterThan(before[3].x + 100);
+  expect(after[2].x - after[3].x).toBeLessThan(before[2].x - before[3].x);
+  const distance = (p: { x: number; y: number }) => {
+    const a = neighbor[1], b = neighbor[2];
+    return Math.abs((b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)) / Math.hypot(b.x - a.x, b.y - a.y);
+  };
+  expect(distance(after[3])).toBeCloseTo(distance(before[3]), 2);
+  expect(panelsCollide(panelRenderedFrame(smaller), panelRenderedFrame(leftBox), 0)).toBe(false);
+  const restored = renderedCorners({ ...smaller, ...snapPanelResize(smaller, 0, 120, 'left', [leftBox], bounds) });
+  restored.forEach((p, i) => { expect(p.x).toBeCloseTo(before[i].x, 5); expect(p.y).toBeCloseTo(before[i].y, 5); });
+  expect(update).toMatchObject({ resizeInk: true, warpInk: true });
 });

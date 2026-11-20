@@ -1,8 +1,8 @@
 # App Store English copy
 
-Reviewed against the current iPad source and running app on 2026-11-13 (checkpoint `fb6a099`). Text files under `en-US/` are ready to paste into App Store Connect. No listing has been uploaded or published.
+Updated against the current iPad source on 2026-11-19 (app checkpoint `a9cf104b`), including reshaping, border styles, and panel zoom. Text files under `en-US/` are ready to paste into App Store Connect. No listing has been uploaded or published.
 
-`whats-new.txt` is for an update to an existing release; omit it for an initial App Store version. Free includes up to four pages. Pro is a non-consumable purchase for Library saving, more pages, PDF email, and printing. No price is hardcoded.
+`whats-new.txt` is for an update to an existing release; omit it for an initial App Store version. Free includes up to four pages. Free allows one saved comic. Pro is a non-consumable purchase for unlimited saved comics and pages, PDF email, and printing. No price is hardcoded.
 
 Field counts are validated without the trailing file newline. Name/subtitle <=30 characters, promotional text <=170, description <=4,000, keywords <=100 UTF-8 bytes.
 

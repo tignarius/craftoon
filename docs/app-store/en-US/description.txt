@@ -3,16 +3,16 @@ Turn your ideas into comics, one panel at a time.
 Craftoon is a drawing space for making comics and storyboards on iPad. Arrange your panels, sketch your scenes, and preview the pages as a story.
 
 BUILD YOUR PAGE
-Start with a portrait or landscape canvas. Drag on the blank page to create panels, or use a grid template. Move and resize panels in Layout mode, with alignment guides to help keep your page tidy.
+Start with a portrait or landscape canvas. Drag on the blank page to create panels, or use a grid template. Move and resize panels in Layout mode, with alignment guides and snapping to help keep your page tidy. Reshape panels with slanted edges, and choose solid, dashed, dotted, or invisible borders.
 
 DRAW INSIDE EACH PANEL
-Switch a panel to Draw mode and use the familiar PencilKit tools with Apple Pencil. Sketch, erase, choose colors, and select strokes with the built-in lasso. Drawing stays inside the panel, so you can focus on the scene.
+Switch a panel to Draw mode and use the familiar PencilKit tools with Apple Pencil. Sketch, erase, choose colors, and select strokes with the built-in lasso. Drawing stays inside the panel, including slanted edges, so you can focus on the scene. Zoom into a single panel for a closer view, then return to your full page.
 
 TRACE YOUR OWN REFERENCES
-Import an image from Photos or Files into an individual panel. Move, rotate, and scale the reference, then adjust its opacity for tracing. Image controls stay in the panel, and changing the reference does not move the panel. Hide the reference to check your drawing, or collapse its controls to continue sketching.
+Import an image from Photos or Files into an individual panel. Move, rotate, and scale the reference, then adjust its opacity for tracing. Reference controls follow the panel, and changing the reference does not move the panel. Hide the reference to check your drawing, or collapse its controls to continue sketching.
 
 READ AND ORGANIZE
-Preview your comic in Read mode. In Library, tap a cover to show Edit, Read, and Delete actions at its center. Tap an empty area to clear the selection, or use Undo after deleting a comic.
+Preview your comic in Read mode. In Library, tap a cover to show Canvas, Read, and Delete actions at its center. Tap an empty area to clear the selection, or use Undo after deleting a comic.
 
 START FREE
 Create and draw comics with up to four pages per comic, and save one comic in Library. Edit your saved comic, read your work and try panel layouts and tracing tools.

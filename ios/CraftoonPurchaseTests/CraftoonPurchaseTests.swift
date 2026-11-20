@@ -428,6 +428,194 @@ final class CraftoonInkPerformanceTests: XCTestCase {
     view.isDrawingActive = true
     XCTAssertEqual(view.canvasView.drawing.strokes.count, 30)
   }
+  func testCaptureReferenceEchoKeepsInactivePreviewAndDrawingCacheStable() async throws {
+    let id = "capture-echo-" + UUID().uuidString
+    let source = ink(3)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 400))
+    let controller = UIViewController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    let view = RNPencilKitView(frame: CGRect(x: 20, y: 20, width: 200, height: 200))
+    view.panelId = id
+    view.drawingData = source.dataRepresentation().base64EncodedString()
+    RNPencilKitView.drawingCache[id] = source
+    controller.view.addSubview(view)
+    view.setNeedsLayout(); view.layoutIfNeeded()
+    let imageView = try XCTUnwrap(view.subviews.compactMap { $0 as? UIImageView }.first)
+    for _ in 0..<150 {
+      if imageView.image != nil, RNPencilKitView.drawingCache[id] == nil { break }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    let originalPreview = try XCTUnwrap(imageView.image)
+    // Native capture publishes a new JS reference for these same cached strokes.
+    RNPencilKitView.drawingCache[id] = source
+    let captured = CraftoonInkStore.capture([["panels": [["id": id]]]])
+    let panels = try XCTUnwrap(captured.pages.first?["panels"] as? [[String: Any]])
+    let reference = try XCTUnwrap(panels.first?["drawingData"] as? String)
+    XCTAssertNotEqual(reference, view.drawingData)
+    view.drawingData = reference
+    try await Task.sleep(nanoseconds: 350_000_000)
+    XCTAssertTrue(imageView.image === originalPreview, "An unchanged capture must not replace the displayed bitmap")
+    XCTAssertNotNil(RNPencilKitView.drawingCache[id], "The echo must not schedule another preview/eviction cycle")
+  }
+
+  func testPreviewRasterUsesDisplayedPixelsAndKeepsABoundedMemoryBudget() {
+    let full = CGSize(width: 900, height: 1200), displayed = CGSize(width: 750, height: 1000)
+    let scale = CraftoonInkPreviewRaster.scale(source: full, displayed: displayed, screenScale: 2, resizing: false)
+    XCTAssertGreaterThan(full.width * scale, 1200)
+    XCTAssertGreaterThanOrEqual(full.width * scale, displayed.width * 2)
+    XCTAssertGreaterThanOrEqual(full.height * scale, displayed.height * 2)
+    let huge = CGSize(width: 8000, height: 6000)
+    let limited = CraftoonInkPreviewRaster.scale(source: huge, displayed: huge, screenScale: 3, resizing: true)
+    XCTAssertLessThanOrEqual(max(huge.width, huge.height) * limited, CraftoonInkPreviewRaster.maximumEdge + 0.01)
+    XCTAssertLessThanOrEqual(huge.width * huge.height * limited * limited, CraftoonInkPreviewRaster.maximumPixels + 0.01)
+  }
+
+  func testLargePanelPreviewRerendersFromVectorInkAtDisplayResolutionAfterResize() async throws {
+    let id = "sharp-resize-" + UUID().uuidString
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 1400, height: 1000))
+    let controller = UIViewController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    let view = RNPencilKitView(frame: CGRect(x: 20, y: 20, width: 900, height: 600))
+    view.panelId = id
+    RNPencilKitView.drawingCache[id] = ink(3)
+    func frame(_ width: Double, _ height: Double, preview: Bool) -> NSDictionary {
+      ["x": 20, "y": 20, "width": width, "height": height, "revision": 0, "preview": preview,
+       "resizeInk": true, "warpInk": true] as NSDictionary
+    }
+    view.shapeFrame = frame(900, 600, preview: false)
+    controller.view.addSubview(view)
+    view.setNeedsLayout(); view.layoutIfNeeded()
+    let imageView = try XCTUnwrap(view.subviews.compactMap { $0 as? UIImageView }.first)
+    for _ in 0..<150 {
+      if imageView.image != nil { break }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    let initial = try XCTUnwrap(imageView.image)
+    XCTAssertGreaterThanOrEqual(CGFloat(try XCTUnwrap(initial.cgImage).width), 900 * window.screen.scale)
+    view.frame.size = CGSize(width: 1200, height: 800)
+    view.shapeFrame = frame(1200, 800, preview: true)
+    view.layoutIfNeeded()
+    for _ in 0..<150 {
+      if let image = imageView.image, CGFloat(image.cgImage?.width ?? 0) >= 1200 * window.screen.scale { break }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    let during = try XCTUnwrap(imageView.image)
+    XCTAssertEqual(during.size.width, 900, accuracy: 0.1, "Drag previews must keep the original drawing's coordinate frame")
+    XCTAssertGreaterThanOrEqual(CGFloat(try XCTUnwrap(during.cgImage).width), 1200 * window.screen.scale)
+    view.shapeFrame = frame(1200, 800, preview: false)
+    view.layoutIfNeeded()
+    for _ in 0..<150 {
+      if let image = imageView.image, abs(image.size.width - 1200) < 0.1 { break }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    let final = try XCTUnwrap(imageView.image)
+    XCTAssertEqual(final.size.width, 1200, accuracy: 0.1)
+    XCTAssertEqual(final.size.height, 800, accuracy: 0.1)
+    XCTAssertGreaterThanOrEqual(CGFloat(try XCTUnwrap(final.cgImage).width), 1200 * window.screen.scale)
+  }
+
+  func testReshapePreviewStaysVisibleUntilVectorRasterCatchesUp() async throws {
+    let id = "visible-warp-" + UUID().uuidString
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 500))
+    let controller = UIViewController()
+    window.rootViewController = controller
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    let original = ink(3)
+    RNPencilKitView.drawingCache[id] = original
+    func frame(_ bottom: Double, preview: Bool) -> NSDictionary {
+      ["x": 0, "width": 200, "height": 200, "revision": 0, "preview": preview, "warpInk": true,
+       "corners": [["x": 0, "y": 0], ["x": 1, "y": 0], ["x": bottom, "y": 1], ["x": 0, "y": 1]]] as NSDictionary
+    }
+    view.shapeFrame = frame(1, preview: false)
+    controller.view.addSubview(view)
+    view.layoutIfNeeded()
+    let bitmap = try XCTUnwrap(view.subviews.compactMap { $0 as? UIImageView }.first)
+    for _ in 0..<150 {
+      if bitmap.image != nil { break }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    let initial = try XCTUnwrap(bitmap.image)
+    for bottom in [0.8, 0.5, 0.3] {
+      view.shapeFrame = frame(bottom, preview: true); view.layoutIfNeeded()
+      let mesh = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier == "craftoon-ink-warp-preview" })
+      XCTAssertFalse(mesh.isHidden)
+      XCTAssertTrue(bitmap.isHidden)
+      XCTAssertEqual(mesh.layer.sublayers?.count, CraftoonInkPreviewWarp.stripCount)
+      XCTAssertTrue(mesh.layer.sublayers?.allSatisfy { $0.contents != nil } == true)
+      XCTAssertTrue(bitmap.image === initial, "Dragging reuses the source raster without rerendering each frame")
+      let current = RNPencilKitView.drawingCache[id] ?? CraftoonInkStore.drawing(CraftoonInkStore.latestReferences[id] ?? "")
+      XCTAssertEqual(try XCTUnwrap(current).strokes[0].path[1].location, original.strokes[0].path[1].location)
+    }
+    view.shapeFrame = frame(0.3, preview: false); view.layoutIfNeeded()
+    let mesh = try XCTUnwrap(view.subviews.first { $0.accessibilityIdentifier == "craftoon-ink-warp-preview" })
+    XCTAssertFalse(mesh.isHidden, "Keep the warped preview while the final vector raster is pending")
+    for _ in 0..<150 {
+      if bitmap.image !== initial { break }
+      try await Task.sleep(nanoseconds: 20_000_000)
+    }
+    XCTAssertFalse(bitmap.isHidden)
+    XCTAssertTrue(mesh.isHidden)
+    XCTAssertFalse(bitmap.image === initial)
+  }
+
+  func testPreviewMeshMapsTaperedStripsToCurrentInkGeometry() throws {
+    let old = [CGPoint(x: 20, y: 0), CGPoint(x: 180, y: 0), CGPoint(x: 200, y: 200), CGPoint(x: 0, y: 200)]
+    let next = [CGPoint(x: 70, y: 0), CGPoint(x: 120, y: 0), CGPoint(x: 160, y: 160), CGPoint(x: 10, y: 160)]
+    let h: CGFloat = 200 / CGFloat(CraftoonInkPreviewWarp.stripCount)
+    for index in 0..<CraftoonInkPreviewWarp.stripCount {
+      let y = CGFloat(index) * h
+      let t = try XCTUnwrap(CraftoonInkPreviewWarp.transform(from: old, to: next, y: y, height: h))
+      for localY in [CGFloat(0), h / 2, h] {
+        for x in [CGFloat(30), 100, 170] {
+          let denominator = t.m14 * x + t.m24 * localY + t.m44
+          let actual = CGPoint(x: (t.m11 * x + t.m21 * localY + t.m41) / denominator,
+                               y: (t.m12 * x + t.m22 * localY + t.m42) / denominator)
+          let expected = CraftoonInkShapeWarp.point(CGPoint(x: x, y: y + localY), from: old, to: next)
+          XCTAssertEqual(actual.x, expected.x, accuracy: 0.02)
+          XCTAssertEqual(actual.y, expected.y, accuracy: 0.02)
+        }
+      }
+    }
+  }
+
+  func testLateCaptureEchoDoesNotReplaceNewlyReshapedInkWithAnOlderArchive() throws {
+    let id = "late-shape-echo-" + UUID().uuidString
+    let original = ink(3)
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    view.drawingData = original.dataRepresentation().base64EncodedString()
+    RNPencilKitView.drawingCache[id] = original
+    func frame(_ size: Double) -> NSDictionary {
+      ["x": 0, "y": 0, "width": size, "height": size, "revision": 0,
+       "preview": false, "resizeInk": true, "warpInk": true] as NSDictionary
+    }
+    view.shapeFrame = frame(200); view.layoutIfNeeded()
+    let before = CraftoonInkStore.capture([["panels": [["id": id]]]])
+    try CraftoonInkStore.persist(before.drawings)
+    let sourcePanels = try XCTUnwrap(before.pages[0]["panels"] as? [[String: Any]])
+    let oldReference = try XCTUnwrap(sourcePanels[0]["drawingData"] as? String)
+    // Fabric can deliver new geometry before the drawingData capture echo.
+    view.frame.size = CGSize(width: 400, height: 400)
+    view.shapeFrame = frame(400); view.layoutIfNeeded()
+    view.drawingData = oldReference
+    let after = CraftoonInkStore.capture([["panels": [["id": id]]]])
+    try CraftoonInkStore.persist(after.drawings)
+    let resultPanels = try XCTUnwrap(after.pages[0]["panels"] as? [[String: Any]])
+    let newReference = try XCTUnwrap(resultPanels[0]["drawingData"] as? String)
+    XCTAssertNotEqual(newReference, oldReference, "Transformed ink must receive its own immutable archive")
+    let restored = try XCTUnwrap(CraftoonInkStore.drawing(newReference)?.strokes.first)
+    XCTAssertEqual(restored.path[1].location.applying(restored.transform).x, 8, accuracy: 0.001)
+    let old = try XCTUnwrap(CraftoonInkStore.drawing(oldReference)?.strokes.first)
+    XCTAssertEqual(old.path[1].location.applying(old.transform).x, 4, accuracy: 0.001)
+  }
+
 }
 
 extension CraftoonInkPerformanceTests {
@@ -1210,6 +1398,122 @@ final class CraftoonPanelShapeTests: XCTestCase {
     view.polygonPoints = [["x": Double.nan, "y": 0]] as NSArray
     view.layoutIfNeeded()
     XCTAssertTrue(view.point(inside: CGPoint(x: 10, y: 10), with: nil))
+  }
+
+  func testLockedArtworkSurvivesResizeAndReshapeWithoutScalingOrDeletingCroppedInk() throws {
+    let id = "locked-resize-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id); CraftoonInkStore.latestReferences.removeValue(forKey: id) }
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 70, y: 80), CGPoint(x: 180, y: 170)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    let original = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .blue), path: path)])
+    RNPencilKitView.drawingCache[id] = original
+    func frame(_ width: Double, _ height: Double, _ bottom: Double, locked: Bool = true) -> NSDictionary {
+      ["x": 100, "y": 120, "width": width, "height": height, "revision": 1, "preview": false,
+       "artworkLocked": locked, "resizeInk": true, "warpInk": true,
+       "corners": [["x": 0, "y": 0], ["x": 1, "y": 0], ["x": bottom, "y": 1], ["x": 0, "y": 1]]] as NSDictionary
+    }
+    view.shapeFrame = frame(200, 200, 1); view.layoutIfNeeded()
+    view.frame.size = CGSize(width: 100, height: 110)
+    view.shapeFrame = frame(100, 110, 0.5); view.layoutIfNeeded()
+    let cropped = try XCTUnwrap(RNPencilKitView.drawingCache[id])
+    XCTAssertEqual(cropped.strokes.count, 1)
+    XCTAssertEqual(cropped.strokes[0].path[0].location.applying(cropped.strokes[0].transform), CGPoint(x: 70, y: 80))
+    XCTAssertEqual(cropped.strokes[0].path[1].location.applying(cropped.strokes[0].transform), CGPoint(x: 180, y: 170))
+    view.frame.size = CGSize(width: 200, height: 200)
+    view.shapeFrame = frame(200, 200, 1); view.layoutIfNeeded()
+    view.shapeFrame = frame(200, 200, 1, locked: false); view.layoutIfNeeded()
+    // Unlocking establishes the current frame, without a delayed resize jump.
+    XCTAssertEqual(try XCTUnwrap(RNPencilKitView.drawingCache[id]).strokes[0].transform, .identity)
+    view.frame.size = CGSize(width: 400, height: 400)
+    view.shapeFrame = frame(400, 400, 1, locked: false); view.layoutIfNeeded()
+    let resized = try XCTUnwrap(RNPencilKitView.drawingCache[id]).strokes[0]
+    XCTAssertEqual(resized.path[0].location.applying(resized.transform), CGPoint(x: 140, y: 160))
+  }
+
+  func testLockedArtworkStaysAtTheSamePagePositionAndMoveCommitsOnlyOnce() throws {
+    let id = "locked-move-" + UUID().uuidString
+    defer { RNPencilKitView.drawingCache.removeValue(forKey: id); CraftoonInkStore.latestReferences.removeValue(forKey: id) }
+    let view = RNPencilKitView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+    view.panelId = id
+    let path = PKStrokePath(controlPoints: [CGPoint(x: 100, y: 100), CGPoint(x: 150, y: 150)].enumerated().map { index, point in
+      PKStrokePoint(location: point, timeOffset: Double(index), size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    RNPencilKitView.drawingCache[id] = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    func frame(_ x: Double, _ y: Double, preview: Bool = false) -> NSDictionary {
+      ["x": x, "y": y, "width": 200, "height": 200, "revision": 0,
+       "preview": preview, "artworkLocked": true, "resizeInk": false, "warpInk": false] as NSDictionary
+    }
+    func point() throws -> CGPoint {
+      let stroke = try XCTUnwrap(RNPencilKitView.drawingCache[id]?.strokes.first)
+      return stroke.path[0].location.applying(stroke.transform)
+    }
+    view.shapeFrame = frame(100, 120); view.layoutIfNeeded()
+    for x in [110.0, 120, 140] {
+      view.shapeFrame = frame(x, 180, preview: true); view.layoutIfNeeded()
+      XCTAssertEqual(try point(), CGPoint(x: 100, y: 100))
+    }
+    view.shapeFrame = frame(140, 180); view.layoutIfNeeded()
+    XCTAssertEqual(try point(), CGPoint(x: 60, y: 40))
+    view.setNeedsLayout(); view.layoutIfNeeded()
+    XCTAssertEqual(try point(), CGPoint(x: 60, y: 40))
+    view.shapeFrame = frame(100, 120); view.layoutIfNeeded()
+    XCTAssertEqual(try point(), CGPoint(x: 100, y: 100))
+  }
+
+
+  func testWarpKeepsOutsideStrokesFiniteAndPreventsBlackBleedAtAConvergingEdge() throws {
+    let old = [CGPoint(x: 0, y: 0), CGPoint(x: 800, y: 0), CGPoint(x: 40, y: 480), CGPoint(x: 0, y: 480)]
+    let next = [CGPoint(x: 0, y: 0), CGPoint(x: 800, y: 0), CGPoint(x: 60, y: 480), CGPoint(x: 0, y: 480)]
+    // Pencil contacts can continue outside the masked panel. Here the old
+    // side extensions meet just below the border, at y = 505.263... .
+    let points = [CGPoint(x: 1, y: 505.2), CGPoint(x: 2, y: 505.26)]
+    let path = PKStrokePath(controlPoints: points.enumerated().map { index, p in
+      PKStrokePoint(location: p, timeOffset: Double(index) * 0.01, size: CGSize(width: 4, height: 4),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    let original = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    let result = CraftoonInkShapeWarp.drawing(original, from: old, to: next)
+    XCTAssertEqual(result.strokes.count, 1, "Masked-out ink must remain editable rather than being deleted")
+    for sample in try XCTUnwrap(result.strokes.first).path {
+      XCTAssertTrue(sample.location.x.isFinite && sample.location.y.isFinite)
+      XCTAssertLessThan(sample.size.width, 20)
+      XCTAssertLessThan(sample.size.height, 20)
+    }
+    XCTAssertFalse(result.bounds.intersects(CGRect(x: 0, y: 0, width: 800, height: 480)),
+      "An outside stroke must not grow into a black blob over the panel")
+    let restored = CraftoonInkShapeWarp.drawing(result, from: next, to: old)
+    for (sample, originalPoint) in zip(try XCTUnwrap(restored.strokes.first).path, points) {
+      XCTAssertEqual(sample.location.x, originalPoint.x, accuracy: 0.001)
+      XCTAssertEqual(sample.location.y, originalPoint.y, accuracy: 0.001)
+    }
+  }
+
+
+  func testRepeatedReshapeRoundTripsDoNotInflateBrushThickness() throws {
+    let old = [CGPoint(x: 180, y: 0), CGPoint(x: 200, y: 0), CGPoint(x: 200, y: 200), CGPoint(x: 0, y: 200)]
+    let next = [CGPoint(x: 180, y: 0), CGPoint(x: 200, y: 0), CGPoint(x: 200, y: 200), CGPoint(x: 180, y: 200)]
+    let points = [CGPoint(x: 50, y: 50), CGPoint(x: 60, y: 60), CGPoint(x: 170, y: 150)]
+    let path = PKStrokePath(controlPoints: points.enumerated().map { index, p in
+      PKStrokePoint(location: p, timeOffset: Double(index) * 0.01, size: CGSize(width: 3, height: 3),
+        opacity: 1, force: 1, azimuth: 0, altitude: .pi / 2)
+    }, creationDate: Date())
+    var drawing = PKDrawing(strokes: [PKStroke(ink: PKInk(.pen, color: .black), path: path)])
+    for _ in 0..<12 {
+      drawing = CraftoonInkShapeWarp.drawing(CraftoonInkShapeWarp.drawing(drawing, from: old, to: next), from: next, to: old)
+      for (sample, original) in zip(try XCTUnwrap(drawing.strokes.first).path, points) {
+        // PencilKit quantizes nib dimensions when a path is rebuilt. Allow
+        // under 2% rounding over 24 rebuilds, not visible/shear inflation.
+        XCTAssertEqual(sample.size.width, 3, accuracy: 0.06)
+        XCTAssertEqual(sample.size.height, 3, accuracy: 0.06, "Moving the outline must not accumulate shear in the pen's thickness")
+        XCTAssertEqual(sample.location.x, original.x, accuracy: 0.01)
+        XCTAssertEqual(sample.location.y, original.y, accuracy: 0.01)
+      }
+    }
   }
 
   private func darkness(_ image: UIImage, at point: CGPoint) throws -> Int {

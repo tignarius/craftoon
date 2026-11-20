@@ -11,7 +11,7 @@ interface PencilKitProps extends ViewProps {
   selectionTimestamp?: number;
   renderScale?: number;
   polygonPoints?: PanelCorners;
-  shapeFrame?: { x: number; width: number; height: number; revision: number; preview: boolean; resizeInk?: boolean; warpInk?: boolean; corners?: PanelCorners;
+  shapeFrame?: { x: number; y?: number; artworkLocked?: boolean; width: number; height: number; revision: number; preview: boolean; resizeInk?: boolean; warpInk?: boolean; corners?: PanelCorners;
     contentBounds?: { x: number; y: number; width: number; height: number } };
   drawingData?: string;
   transparentBackground?: boolean;

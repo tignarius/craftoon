@@ -11,7 +11,7 @@ import { AppText } from '../src/components/AppText';
 import { PencilKitView } from '../PencilKitView';
 import { reshapePanelPoint } from '../src/utils/panelSnap';
 
-jest.mock('lucide-react-native', () => ({ MoveHorizontal: () => null, ArrowUpRight: () => null, ZoomIn: () => null, ZoomOut: () => null, Image: () => null, Move: () => null, Pen: () => null, Lasso: () => null, Trash2: () => null, Eye: () => null, EyeOff: () => null, Settings2: () => null, Check: () => null, RotateCw: () => null, Maximize2: () => null }));
+jest.mock('lucide-react-native', () => ({ LockKeyhole: () => null, LockKeyholeOpen: () => null, MoveHorizontal: () => null, ArrowUpRight: () => null, ZoomIn: () => null, ZoomOut: () => null, Image: () => null, Move: () => null, Pen: () => null, Lasso: () => null, Trash2: () => null, Eye: () => null, EyeOff: () => null, Settings2: () => null, Check: () => null, RotateCw: () => null, Maximize2: () => null }));
 jest.mock('../PencilKitView', () => ({ PencilKitView: jest.fn(() => null) }));
 jest.mock('../src/components/SpeechBubble', () => ({ SpeechBubble: () => null }));
 
@@ -917,4 +917,24 @@ test.each([0.5, 0.8, 1.2])('focused controls follow the short top edge and keep 
     expect(updated.left).toBeCloseTo(403);
     expect(updated.top! + updated.height! + 10).toBeCloseTo(394.8);
   } finally { await act(async () => renderer.unmount()); }
+});
+
+test('the per-panel artwork lock is available only in Layout and survives switching to Draw', async () => {
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  const onArtworkLockChange = jest.fn();
+  const options = { panel: panels[0], onSelect: jest.fn(), onModeChange: jest.fn(), onMove: jest.fn(), onResize: jest.fn(),
+    onDelete: jest.fn(), onDoubleTap: jest.fn(), onArtworkLockChange };
+  try {
+    await act(async () => { renderer = ReactTestRenderer.create(<Panel {...options} mode="layout" />); });
+    const lock = renderer.root.findAllByType(TouchableOpacity).find(b => b.props.accessibilityLabel === 'Lock artwork')!;
+    await act(async () => lock.props.onPress());
+    expect(onArtworkLockChange).toHaveBeenCalledWith('a', true);
+    await act(async () => renderer.update(<Panel {...options} panel={{ ...panels[0], artworkLocked: true }} mode="layout" />));
+    const unlock = renderer.root.findAllByType(TouchableOpacity).find(b => b.props.accessibilityLabel === 'Unlock artwork')!;
+    expect(unlock.props.accessibilityState.selected).toBe(true);
+    expect(renderer.root.findByType(PencilKitView).props.shapeFrame.artworkLocked).toBe(true);
+    await act(async () => renderer.update(<Panel {...options} panel={{ ...panels[0], artworkLocked: true }} mode="draw" />));
+    expect(renderer.root.findAllByType(TouchableOpacity).some(b => /^(Unl|L)ock artwork$/.test(b.props.accessibilityLabel))).toBe(false);
+    expect(renderer.root.findByType(PencilKitView).props.shapeFrame.artworkLocked).toBe(true);
+  } finally { if (renderer) { await act(async () => renderer.unmount()); } }
 });
