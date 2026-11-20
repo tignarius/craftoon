@@ -1365,3 +1365,25 @@ test('an unsaved blank template is still restored as a real layout', async () =>
   expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(1);
   expect(storyLibrary.restorePages).toHaveBeenCalledWith(draft.pages);
 });
+
+
+test('a template on a blank page does not ask to save artwork on another page', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  await chooseFormat();
+  await act(async () => renderer.root.findByType(Workspace).props.onAddPanel({ x: 12, y: 12, width: 120, height: 120 }));
+  const panelId = renderer.root.findByType(Workspace).props.panels[0].id;
+  await act(async () => renderer.root.findByType(Workspace).props.onUpdatePanel(panelId, {
+    drawingData: 'craftoon-ink:artwork', drawingHasStrokes: true,
+  }));
+  await act(async () => renderer.root.findByType(Header).props.onAddPage());
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(0);
+  await act(async () => renderer.root.findByType(Header).props.onCreateLayout(2, 2));
+  expect(switchDialog()).toBeUndefined();
+  expect(renderer.root.findByType(SaveComicDialog).props.visible).toBe(false);
+  expect(renderer.root.findByType(Header).props.totalPages).toBe(2);
+  expect(renderer.root.findByType(Workspace).props.panels).toHaveLength(4);
+  await act(async () => renderer.root.findByType(Header).props.onPrevPage());
+  expect(renderer.root.findByType(Workspace).props.panels).toEqual([
+    expect.objectContaining({ id: panelId, drawingData: 'craftoon-ink:artwork', drawingHasStrokes: true }),
+  ]);
+});

@@ -566,8 +566,11 @@ function CraftoonApp(): React.JSX.Element {
         setPanelModes({});
         setCurrentTool('panel');
       };
-      const hasWork = captured.some(page => page.bubbles.length > 0 || !!page.stickers?.length ||
-        !!page.tracingImage || page.panels.some(panel =>
+      // A template on a blank page does not replace artwork on other pages.
+      // Only the page receiving the template needs a save decision.
+      const templatePage = captured[currentPageIndex];
+      const hasWork = !!templatePage && (templatePage.bubbles.length > 0 || !!templatePage.stickers?.length ||
+        !!templatePage.tracingImage || templatePage.panels.some(panel =>
           // Older template panels predate layoutSource but have a dedicated ID prefix.
           (panel.layoutSource ?? (panel.id.startsWith('panel-grid-') ? 'template' : 'manual')) === 'manual' ||
           !!panel.tracingImage ||
