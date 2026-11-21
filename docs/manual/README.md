@@ -1,5 +1,7 @@
 # English quick guide
 
+Reviewed 2026-11-20 against application checkpoint `7312da23` and the user-approved PDF layout.
+
 `scripts/build-guide.py` generates one common English, one-page guide at `output/pdf/craftoon-quick-guide.pdf`, copies it to `ios/Craftoon/craftoon-quick-guide.pdf`, and renders `tmp/pdfs/craftoon-quick-guide.png` for visual review. Run it with a Python environment containing reportlab, Pillow, pypdf and PyMuPDF. PDF generation does not build or install the app.
 
 The common page is 595.28 x 871.89 pt. The app bundles only this common PDF and opens it in both orientations. PDFKit fits the whole page after safe-area layout and refits on rotation, preserving pinch zoom while the view bounds remain unchanged. The guide is available offline to Free and Pro users. Older orientation-specific PDFs are historical review artifacts and are not bundled or regenerated.
@@ -18,4 +20,6 @@ The extended Layout section adds Auto arrange (the green PanelsTopLeft + Sparkle
 
 The border-style toolbar icon uses three horizontal lines: solid on top, dashed in the middle and dotted at the bottom, all with identical visible endpoints; its four menu choices retain their individual appearances. The artwork-lock overlay sits toward the outer right edge while leaving the circular button outline visible.
 
-Drawing begins lower than Layout to make room for the actual page controls (previous triangle, minus, plus and next triangle) beside the page caption, linked to the single original counter by a filled purple elbow arrow and Click to open label; both panels retain the same bottom edge. The Read card is raised to align with Library, and the former full-width benefits footer is placed beneath Read.
+Drawing begins lower than Layout to make room for the actual page controls (previous triangle, minus, plus and next triangle) beside the page caption, linked to the single original counter by a filled purple elbow arrow and Click to open label. The menu example is half its earlier size, has no duplicate counter, and uses the exact custom PageArrow triangles plus Lucide minus/plus. Pages is captioned above the original counter with the same downward arrow as the other main controls; the curved connector below it has a shortened horizontal run. Insert or delete pages sits beside the menu; both panels retain the same bottom edge. The Read card is raised to align with Library, and the former full-width benefits footer is placed beneath Read.
+
+The app also supports long-press Library reordering, but the accepted one-page guide still uses its existing selected-cover illustration. No additional drag instructions or new screenshot were inserted during this documentation refresh.

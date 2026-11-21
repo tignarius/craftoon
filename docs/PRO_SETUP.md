@@ -1,5 +1,7 @@
 # Craftoon Pro
 
+Reviewed 2026-11-20 against application checkpoint `7312da23`. App Store Connect enrollment and real sales remain pending.
+
 The app is Free by default. Pro is a **one-time, non-consumable** Apple In-App Purchase.
 
 - Developer credit: **Squareplayer** (`CraftoonDeveloperName` in `ios/Craftoon/Info.plist`).
@@ -9,9 +11,9 @@ The app is Free by default. Pro is a **one-time, non-consumable** Apple In-App P
 
 ## Free and Pro
 
-Free allows drawing, layouts, reading, and up to **4 pages per current comic**. Named Library saving, PDF/email/print export, and adding further pages require Pro. Both versions keep native automatic draft recovery. Existing saved comics and recovery drafts are not deleted or truncated when access is Free or a purchase is revoked.
+Free allows drawing, layouts, tracing, reading, up to **4 pages per comic**, and **1 named saved comic** in Library. That comic can be edited and saved again. Pro is required for a second saved comic, more than four pages, PDF email and printing. The offline Quick Guide, Library selection/reordering and opening existing saved comics remain available in Free. Both versions keep native automatic draft recovery. Existing saved comics and recovery drafts are not deleted or truncated when access is Free or a purchase is revoked.
 
-All page creation routes share the same limit, including the side `+`, the page menu, and layout templates that create another page. Native Library saving and export also verify the entitlement. Viewing or editing older saved comics remains available.
+All page creation routes share the same limit, including the side `+`, the page menu, and layout templates that create another page. Native Library saving enforces the one-comic Free limit and permits resaving an existing comic; PDF email and printing verify Pro entitlement. Viewing or editing older saved comics remains available.
 
 The first button in Canvas, Library and Read identifies the current mode and opens the same app-information/purchase panel. A matching welcome button on the splash screen allows immediate purchase. Cancelling a purchase leaves the drawing intact. Pending approval leaves the app Free until a verified transaction arrives. Restore purchases is available in the same panel.
 
@@ -23,7 +25,7 @@ The first button in Canvas, Library and Read identifies the current mode and ope
 4. Complete the paid-app agreement, tax and banking setup, and submit the purchase with the app as required by App Store Connect.
 5. Test using Sandbox/TestFlight before release.
 
-Without a registered/available product, the app stays Free and shows that purchases are unavailable; it does not simulate a successful real purchase. Prices in other storefronts are provided by Apple.
+Without an available product, a new purchase cannot proceed. Access still follows verified entitlements, so a catalog/network failure does not itself revoke an existing Pro purchase. The app does not simulate a successful real purchase; localized storefront prices come from StoreKit.
 
 Official references: [configure In-App Purchases](https://developer.apple.com/help/app-store-connect/configure-in-app-purchase-settings/overview-for-configuring-in-app-purchases/), [StoreKit testing](https://developer.apple.com/documentation/xcode/setting-up-storekit-testing-in-xcode).
 
@@ -38,6 +40,14 @@ xcodebuild -workspace ios/Craftoon.xcworkspace -scheme CraftoonPurchases \
 npm test -- --runInBand --watchman=false
 ```
 
-Native tests cover verified purchase, restore, Ask to Buy approval, refund/revocation, rejection of Free Library saving, and preservation of Free draft recovery. JavaScript tests cover feature gates, cancellation/pending UI, transaction updates, duplicate purchase taps, and preservation of legacy comics.
+Native tests cover verified purchase, restore, Ask to Buy approval, refund/revocation, enforcement of Free Library limits, and preservation of Free draft recovery. JavaScript tests cover feature gates, cancellation/pending UI, transaction updates, duplicate purchase taps, and preservation of legacy comics.
 
 For an interactive local preview, run the `CraftoonPurchases` scheme in Xcode with `CraftoonPro.storekit` selected under Run > Options > StoreKit Configuration. The regular `Craftoon` scheme is not configured to simulate purchases.
+
+## Access and delivery checks
+
+Source limits are `FREE_PAGE_LIMIT = 4` and `FREE_FILE_LIMIT = 1` in `src/access/accessPolicy.ts`. Native save/export checks are in `CraftoonLibrary`; JavaScript UI gates alone do not grant entitlement. A restored/revoked entitlement never deletes existing documents.
+
+The mail composer opened successfully on the older physical iPad after the presentation timing fix. This is not proof of message delivery, sandbox payment approval, a production StoreKit product or code redemption. If Mail is not configured, the app offers setup or PDF sharing. The system Mail composer manages its own draft-save/delete menu.
+
+No working production offer codes are stored in the repository. Activation uses Apple's redemption flow; see [PROMOTION_CODES.md](PROMOTION_CODES.md). The intended CAD 4.99 price is a project decision and local test value, not a verified live App Store price.

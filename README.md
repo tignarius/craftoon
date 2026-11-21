@@ -1,97 +1,62 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# Craftoon
 
-# Getting Started
+Updated 2026-11-20 against application checkpoint `7312da23`.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+Craftoon is an English-language iPad app for drawing comics and storyboards. The current application is React Native 0.82.1 / React 19.1.1 with native Swift PencilKit, file-backed artwork, StoreKit purchases and PDF email/printing. The iOS project targets iPad only, with deployment target iPadOS 15.1. Android scaffolding remains in the repository; native feature parity has not been validated.
 
-## Step 1: Start Metro
+## Current features
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+- Canvas, Library and Read screens. Layout and Draw are the two panel modes; stroke selection uses PencilKit's built-in lasso.
+- Draw rectangular or slanted panels, resize/move them with guides and snapping, and choose solid, dashed, dotted or invisible borders.
+- Templates and Auto arrange tidy rough layouts using template spacing. Already aligned regions are preserved.
+- Lock artwork to change a panel boundary without moving/scaling its drawing or tracing reference. Unlocked artwork follows panel resize/reshape; a cached preview follows the gesture and native vector ink is committed once on release.
+- Focused panel zoom with crisp borders and separate, unscaled controls. Import one tracing reference per panel from Photos/Files; move, rotate, scale, hide and adjust opacity independently.
+- Library cover selection exposes Canvas, Read and Delete actions without moving the gallery. Empty-space deselection, deletion Undo and long-press drag reordering are available. Custom order survives reopening; newly saved comics appear first.
+- Read pages by swiping. Pro can attach a PDF in the system Mail composer or print. Cancel/dismiss and failed export restore button availability.
+- One bundled English Quick Guide is used in both orientations. The mode menu also provides edition/version, unlock, restore, activation code entry and creator credit.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+## Free and Pro
+
+Free includes up to **4 pages per comic** and **1 saved comic** in Library. That saved comic can be edited and saved again. Layout, drawing, tracing, reading and the offline guide are available in Free. Pro is a one-time non-consumable purchase for unlimited pages and saved comics, PDF email and printing. Existing documents are not deleted when access changes. See [Pro setup](docs/PRO_SETUP.md).
+
+## Development
+
+Install the JavaScript dependencies with `npm ci`. For native dependencies, use `bundle install`, then run `bundle exec pod install` from `ios/`. An existing configured Xcode installation and appropriate signing are required for a physical device.
 
 ```sh
-# Using npm
 npm start
-
-# OR using Yarn
-yarn start
-```
-
-## Step 2: Build and run your app
-
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
-
-```sh
-# Using npm
-npm run android
-
-# OR using Yarn
-yarn android
-```
-
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
 npm run ios
-
-# OR using Yarn
-yarn ios
+# Release, without a Metro dependency:
+npm run ios:release
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+Use the `Craftoon` scheme for the app. The `CraftoonPurchases` scheme includes local StoreKit testing; its configuration is not a real purchase or production entitlement.
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+```sh
+npm test -- --runInBand --watchman=false
+npx tsc --noEmit
+xcodebuild -workspace ios/Craftoon.xcworkspace -scheme CraftoonPurchases \
+  -configuration Debug -destination 'platform=iOS Simulator,name=Craftoon Recovery QA' \
+  -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+```
 
-## Step 3: Modify your app
+The latest complete JavaScript run passed 340 tests. Targeted native panel/ink, Mail-presentation and Library-order suites also passed; see [performance and verification](docs/PERFORMANCE.md) for the scope of those checks. Do not run two Xcode builds concurrently when they share this Mac's configured product directory.
 
-Now that you have successfully run the app, let's make changes!
+## Documents and release state
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+- [Feature review](docs/FEATURE_REVIEW.md)
+- [Storage, rendering and performance](docs/PERFORMANCE.md)
+- [Pro configuration](docs/PRO_SETUP.md)
+- [Promotion/offer codes](docs/PROMOTION_CODES.md)
+- [Quick Guide source and PDF workflow](docs/manual/README.md)
+- [App Store copy](docs/app-store/README.md) and [submission status](docs/app-store/SUBMISSION_STATUS.md)
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+Release builds of `7312da23` were installed and launched on both the iPad 7th generation and the device named iPad 10 (iPad A16). This is development installation, not an App Store release. Paid Developer Program enrollment and App Store submission are not confirmed complete.
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## Saving, history and backups
 
-## Congratulations! :tada:
+Git history preserves committed source/document versions; it does **not** back up comics drawn inside an iPad. The pre-refresh documentation is identified by tag `backup/docs-before-refresh-20261120` at `7312da23`, whose `main` commit was verified on GitHub before this refresh. Use `git show <commit>:<path>` or GitHub history to read an older file; restore only specific files when needed rather than resetting unrelated work.
 
-You've successfully run and modified your React Native App. :partying_face:
+The user instruction “저장하자” means save current changes, build, update connected iPads and commit. Keep build products, caches and temporary diagnostics out of those commits. A local commit and a remote push are separate operations; verify the remote branch before reporting an upload complete.
 
-### Now what?
-
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
-
-# Troubleshooting
-
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
-
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+Device document backups require the manifests, native ink and reference-image files together; see [PERFORMANCE.md](docs/PERFORMANCE.md). Automatic draft recovery and PDF email are not equivalent to a complete editable-document backup.

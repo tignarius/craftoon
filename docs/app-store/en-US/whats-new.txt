@@ -5,3 +5,7 @@
 - Select a comic in Library to reveal centered actions without shifting the gallery. Tap empty space to deselect.
 - Refined canvas orientation selection and a simpler app menu.
 - Updated the English one-page Quick Guide.
+- Tidy rough layouts with Auto arrange, or lock artwork while changing panel boundaries.
+- Keep artwork visible during reshaping and preserve editable ink on release.
+- Hold and drag Library covers to save a custom order.
+- Improved reader email progress and native Mail presentation/dismissal handling.
