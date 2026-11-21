@@ -118,11 +118,34 @@ class CraftoonPanelClipView: RCTView {
   }
 }
 
+// A Mail form sheet can be swiped away without the Mail delegate's Done/Cancel
+// callback. Observe that route too, otherwise the JS promise stays pending.
+final class CraftoonMailDismissalObserver: NSObject, UIAdaptivePresentationControllerDelegate {
+  private weak var controller: UIViewController?
+  private var onDismiss: (() -> Void)?
+  init(controller: UIViewController, onDismiss: @escaping () -> Void) {
+    self.controller = controller
+    self.onDismiss = onDismiss
+  }
+  func observe(_ controller: UIViewController) {
+    self.controller = controller
+    controller.presentationController?.delegate = self
+  }
+  func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+    guard presentationController.presentedViewController === controller else { return }
+    let completion = onDismiss
+    onDismiss = nil
+    completion?()
+  }
+}
+
 // Store complete comics in Application Support, outside temporary/cache storage.
 @objc(CraftoonLibrary)
 class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
   private var tracingPicker: CraftoonTracingImagePicker?
   private var mailCompletion: ((Bool, Error?) -> Void)?
+  private var mailDismissalObserver: CraftoonMailDismissalObserver?
+  private var mailController: UIViewController?
   private let storageQueue = CraftoonInkStore.queue
   private let storageRoot: URL?
 
@@ -474,12 +497,19 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
   @objc func emailStory(_ story: NSDictionary,
                         resolver resolve: @escaping RCTPromiseResolveBlock,
                         rejecter reject: @escaping RCTPromiseRejectBlock) {
-    withProAccess(reject: reject) {
+    NSLog("[CraftoonEmail] requested")
+    withProAccess(reject: { code, message, error in
+      NSLog("[CraftoonEmail] access rejected: %@", code ?? "unknown")
+      reject(code, message, error)
+    }) {
+      NSLog("[CraftoonEmail] access granted")
       guard self.mailCompletion == nil else {
+        NSLog("[CraftoonEmail] busy")
         reject("EMAIL_BUSY", "An email is already open.", nil)
         return
       }
       guard let pages = story["pages"] as? [[String: Any]], !pages.isEmpty else {
+        NSLog("[CraftoonEmail] no pages")
         reject("EMAIL_FAILED", "The comic has no pages.", nil)
         return
       }
@@ -488,12 +518,19 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
         guard !finished else { return }
         finished = true
         self.mailCompletion = nil
-        if let error = error { reject("EMAIL_FAILED", "Could not prepare the email.", error) }
+        self.mailDismissalObserver = nil
+        self.mailController = nil
+        if let error = error {
+          let failure = error as NSError
+          NSLog("[CraftoonEmail] failed domain=%@ code=%ld", failure.domain, failure.code)
+          reject("EMAIL_FAILED", error.localizedDescription, error)
+        }
         else { resolve(completed) }
       }
       self.mailCompletion = complete
       let title = story["title"] as? String ?? "Comic"
       self.storageQueue.async {
+        NSLog("[CraftoonEmail] rendering %ld pages", pages.count)
         // Keep the UI responsive while rendering a smaller attachment. Saved
         // ink remains editable and is never replaced with this email preview.
         let images = pages.compactMap { self.pageImage($0, maxPixels: 1400) }
@@ -507,6 +544,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
         let lossless = comicPDF(images: images, firstPage: 1, lastPage: images.count)
         let jpeg = comicPDF(images: images, firstPage: 1, lastPage: images.count, compact: true)
         let document = jpeg.count < lossless.count ? jpeg : lossless
+        NSLog("[CraftoonEmail] PDF ready bytes=%ld", document.count)
         DispatchQueue.main.async { self.presentEmail(document: document, title: title, completion: complete) }
       }
     }
@@ -521,6 +559,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
       return
     }
     while let presented = presenter.presentedViewController { presenter = presented }
+    NSLog("[CraftoonEmail] presenter=%@ attached=%d mailConfigured=%d", String(describing: type(of: presenter)), presenter.viewIfLoaded?.window != nil ? 1 : 0, MFMailComposeViewController.canSendMail() ? 1 : 0)
     let name = String(title.components(separatedBy: CharacterSet(charactersIn: "/\\:\n\r"))
       .joined(separator: "_").prefix(80))
     let filename = (name.isEmpty ? "Comic" : name) + ".pdf"
@@ -530,7 +569,7 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
       composer.modalPresentationStyle = .formSheet
       composer.setSubject(title)
       composer.addAttachmentData(document, mimeType: "application/pdf", fileName: filename)
-      presenter.present(composer, animated: true)
+      presentEmailController(composer, from: presenter, completion: complete)
       return
     }
     let showShare = {
@@ -549,7 +588,10 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
           popover.sourceRect = CGRect(x: window.bounds.width - window.safeAreaInsets.right - 112,
             y: window.safeAreaInsets.top + 6, width: 44, height: 44)
         }
-        presenter.present(share, animated: true)
+        self.presentEmailController(share, from: presenter) { completed, error in
+          try? FileManager.default.removeItem(at: folder)
+          complete(completed, error)
+        }
       } catch {
         try? FileManager.default.removeItem(at: folder)
         complete(false, error)
@@ -566,7 +608,29 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     notice.addAction(UIAlertAction(title: "Share PDF", style: .default) { _ in
       presenter.dismiss(animated: true, completion: showShare)
     })
-    presenter.present(notice, animated: true)
+    presentEmailController(notice, from: presenter, completion: complete)
+  }
+
+  func presentEmailController(_ controller: UIViewController, from presenter: UIViewController,
+                                      completion complete: @escaping (Bool, Error?) -> Void) {
+    let failed = { complete(false, NSError(domain: "CraftoonLibrary", code: 7,
+      userInfo: [NSLocalizedDescriptionKey: "Could not open the email window."])) }
+    NSLog("[CraftoonEmail] presenting=%@ attached=%d dismissing=%d", String(describing: type(of: controller)), presenter.viewIfLoaded?.window != nil ? 1 : 0, presenter.isBeingDismissed ? 1 : 0)
+    guard presenter.viewIfLoaded?.window != nil, !presenter.isBeingDismissed else { failed(); return }
+    let observer = CraftoonMailDismissalObserver(controller: controller) { complete(false, nil) }
+    mailDismissalObserver = observer
+    mailController = controller
+    // Mail may forward presentation to an internal controller. Its own
+    // presentingViewController can remain nil while the sheet is preparing.
+    // Observe UIKit's presentation completion, never a one-main-turn deadline.
+    presenter.present(controller, animated: true) { [weak self, weak presenter] in
+      guard self?.mailDismissalObserver === observer else { return }
+      if let shown = presenter?.presentedViewController {
+        observer.observe(shown)
+        NSLog("[CraftoonEmail] shown=%@", String(describing: type(of: shown)))
+      }
+    }
+    observer.observe(controller)
   }
 
   func mailComposeController(_ controller: MFMailComposeViewController,
@@ -755,6 +819,36 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     }
   }
 
+  private func libraryOrderURL() throws -> URL {
+    let folder = try directory().appendingPathComponent("Metadata", isDirectory: true)
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    return folder.appendingPathComponent("order.json")
+  }
+
+  private func libraryOrder() throws -> [String] {
+    let url = try libraryOrderURL()
+    guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+    return try JSONDecoder().decode([String].self, from: Data(contentsOf: url))
+  }
+
+  @objc func reorderStories(_ ids: NSArray, resolver resolve: @escaping RCTPromiseResolveBlock,
+                           rejecter reject: @escaping RCTPromiseRejectBlock) {
+    storageQueue.async {
+      do {
+        guard let order = ids as? [String], Set(order).count == order.count else {
+          throw NSError(domain: "CraftoonLibrary", code: 8)
+        }
+        for id in order {
+          guard FileManager.default.fileExists(atPath: try self.storyURL(id).path) else {
+            throw NSError(domain: "CraftoonLibrary", code: 8)
+          }
+        }
+        try JSONEncoder().encode(order).write(to: self.libraryOrderURL(), options: .atomic)
+        resolve(nil)
+      } catch { reject("ORDER_FAILED", "Could not save the comic order.", error) }
+    }
+  }
+
   @objc func listStories(_ resolve: @escaping RCTPromiseResolveBlock,
                         rejecter reject: @escaping RCTPromiseRejectBlock) {
     storageQueue.async {
@@ -783,7 +877,18 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
           let second = $1["createdAt"] as? String ?? ""
           return first == second ? ($0["id"] as? String ?? "") < ($1["id"] as? String ?? "") : first > second
         }
-        resolve(stories)
+        let order = try self.libraryOrder()
+        let ranks = Dictionary(order.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: { first, _ in first })
+        let fresh = stories.filter { ranks[$0["id"] as? String ?? ""] == nil }
+        let arranged = stories.filter { ranks[$0["id"] as? String ?? ""] != nil }.sorted {
+          (ranks[$0["id"] as? String ?? ""] ?? 0) < (ranks[$1["id"] as? String ?? ""] ?? 0)
+        }
+        let sorted = fresh + arranged
+        resolve(sorted.enumerated().map { index, story -> [String: Any] in
+          var result = story
+          result["libraryOrder"] = index
+          return result
+        })
       } catch { reject("LIST_FAILED", "Could not open the library.", error) }
     }
   }

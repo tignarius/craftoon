@@ -133,6 +133,7 @@ function CraftoonApp(): React.JSX.Element {
     };
   }, [storyId, currentScreen]);
   const emailingRef = useRef(false);
+  const emailRequestRef = useRef(0);
   const [emailing, setEmailing] = useState(false);
   const [saveDialogVisible, setSaveDialogVisible] = useState(false);
   const [saveName, setSaveName] = useState('');
@@ -147,6 +148,13 @@ function CraftoonApp(): React.JSX.Element {
   const savedRevisionRef = useRef(0);
   // Library previews have their own document; browsing never replaces the draft.
   const [previewStory, setPreviewStory] = useState<SavedStory | null>(null);
+  // Email progress belongs to this reader session, not the next comic/screen.
+  useEffect(() => {
+    emailRequestRef.current += 1;
+    emailingRef.current = false;
+    setEmailing(false);
+    return () => { emailRequestRef.current += 1; };
+  }, [currentScreen, storyId, previewStory?.id]);
   const [previewPageIndex, setPreviewPageIndex] = useState(0);
   const [recoveryReady, setRecoveryReady] = useState(false);
   const recoveryErrorShownRef = useRef(false);
@@ -937,6 +945,7 @@ function CraftoonApp(): React.JSX.Element {
   const handleEmail = async () => {
     if (currentScreen !== 'reader' || emailingRef.current) { return; }
     if (!requirePro('export', 'reader')) { return; }
+    const request = ++emailRequestRef.current;
     emailingRef.current = true;
     setEmailing(true);
     try {
@@ -944,10 +953,15 @@ function CraftoonApp(): React.JSX.Element {
         id: storyId, title: storyTitle, pages: await storyLibrary.capturePages(pages),
         updatedAt: new Date().toISOString(),
       };
+      if (request !== emailRequestRef.current) { return; }
       await storyLibrary.emailStory(story);
-    } catch {
-      Alert.alert('Could not prepare email', 'Your comic is still open. Please try again.');
-    } finally { emailingRef.current = false; setEmailing(false); }
+    } catch (error) {
+      if (request !== emailRequestRef.current) { return; }
+      const detail = error instanceof Error ? error.message : '';
+      Alert.alert('Could not prepare email', detail || 'Your comic is still open. Please try again.');
+    } finally {
+      if (request === emailRequestRef.current) { emailingRef.current = false; setEmailing(false); }
+    }
   };
 
   const handlePrint = () => {

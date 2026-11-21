@@ -11,7 +11,7 @@ jest.mock('../src/access/ProProvider', () => ({
   usePro: () => ({ requirePro: mockRequirePro, openInfo: jest.fn() }),
 }));
 jest.mock('../src/services/storyLibrary', () => ({ storyLibrary: {
-  loadStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(), listStories: jest.fn(), deleteStory: jest.fn(), restoreStory: jest.fn(),
+  reorderStories: jest.fn(), loadStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(), listStories: jest.fn(), deleteStory: jest.fn(), restoreStory: jest.fn(),
 } }));
 
 const initialWindow = Dimensions.get('window');
@@ -28,6 +28,7 @@ const button = (label: string) => renderer.root.findAllByType(TouchableOpacity)
 beforeEach(async () => {
   jest.clearAllMocks();
   mockRequirePro.mockReturnValue(true);
+  (storyLibrary.reorderStories as jest.Mock).mockReset().mockResolvedValue(undefined);
   (storyLibrary.listStories as jest.Mock).mockResolvedValue([comic]);
   (storyLibrary.emailStory as jest.Mock).mockReset().mockResolvedValue(false);
   (storyLibrary.deleteStory as jest.Mock).mockResolvedValue({ token: 'receipt' });
@@ -275,4 +276,75 @@ test('comic presses stop before the empty-space deselection handler', async () =
   await act(async () => button('Alpha').props.onPress(event));
   expect(event.stopPropagation).toHaveBeenCalledTimes(1);
   expect(button('Alpha').props.accessibilityState.selected).toBe(true);
+});
+
+test('manual order survives loading and accessible reordering saves IDs without editing a comic', async () => {
+  const other = { ...comic, id: 'beta', title: 'Beta', libraryOrder: 0 };
+  (storyLibrary.listStories as jest.Mock).mockResolvedValue([other, { ...comic, libraryOrder: 1 }]);
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(<LibraryScreen onHome={onHome} onOpen={onOpen} onDeleted={onDeleted} />); });
+  expect(renderer.root.findByType(FlatList).props.data.map((item: any) => item.id)).toEqual(['beta', 'alpha']);
+  await act(async () => button('Alpha').props.onAccessibilityAction({ nativeEvent: { actionName: 'moveEarlier' } }));
+  expect(storyLibrary.reorderStories).toHaveBeenCalledWith(['alpha', 'beta']);
+  expect(renderer.root.findByType(FlatList).props.data.map((item: any) => item.id)).toEqual(['alpha', 'beta']);
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
+test('failed order save restores the previous order', async () => {
+  jest.spyOn(Alert, 'alert').mockImplementation(() => {});
+  (storyLibrary.listStories as jest.Mock).mockResolvedValue([comic, { ...comic, id: 'beta', title: 'Beta' }]);
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(<LibraryScreen onHome={onHome} onOpen={onOpen} onDeleted={onDeleted} />); });
+  const before = renderer.root.findByType(FlatList).props.data.map((item: any) => item.id);
+  (storyLibrary.reorderStories as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+  await act(async () => button('Alpha').props.onAccessibilityAction({ nativeEvent: { actionName: 'moveLater' } }));
+  expect(renderer.root.findByType(FlatList).props.data.map((item: any) => item.id)).toEqual(before);
+  expect(Alert.alert).toHaveBeenCalledWith('Could not save order', expect.any(String));
+});
+
+test('holding a cover and dragging to the next slot saves one reorder without opening it', async () => {
+  let deferMeasurement = false;
+  let pendingMeasurement: (() => void) | undefined;
+  let now = 2000;
+  jest.spyOn(Date, 'now').mockImplementation(() => now);
+  const beta = { ...comic, id: 'beta', title: 'Beta' };
+  (storyLibrary.listStories as jest.Mock).mockResolvedValue([comic, beta]);
+  const nativeNode = (element: any) => ({
+    measureInWindow: (callback: Function) => {
+      if (element.props.testID === 'library-drag-surface') callback(0, 40, 400, 600);
+      else if (element.props.accessibilityLabel === 'Alpha') callback(16, 56, 150, 240);
+      else if (element.props.accessibilityLabel === 'Beta') callback(182, 56, 150, 240);
+      else callback(0, 0, 0, 0);
+    },
+  });
+  await act(async () => { renderer.unmount(); renderer = ReactTestRenderer.create(
+    <LibraryScreen onHome={onHome} onOpen={onOpen} onDeleted={onDeleted} />, { createNodeMock: nativeNode }); });
+  for (const node of renderer.root.findAll(item => typeof item.instance?.measureInWindow === 'function')) {
+    jest.spyOn(node.instance, 'measureInWindow').mockImplementation(function (this: any, callback: any) {
+      if (this.props.testID === 'library-drag-surface') {
+        if (deferMeasurement) pendingMeasurement = () => callback(0, 40, 400, 600);
+        else callback(0, 40, 400, 600);
+      }
+      else {
+        const index = renderer.root.findByType(FlatList).props.data.findIndex((item: any) => item.title === this.props.accessibilityLabel);
+        callback(16 + index * 166, 56, 150, 240);
+      }
+    });
+  }
+  await act(async () => button('Alpha').props.onLongPress({ nativeEvent: { pageX: 60, pageY: 100 } }));
+  expect(renderer.root.findByType(FlatList).props.scrollEnabled).toBe(false);
+  const body = renderer.root.findAll(item => item.props.testID === 'library-drag-surface' && item.props.onResponderMove)[0];
+  await act(async () => body.props.onResponderMove({ nativeEvent: { pageX: 240, pageY: 100 } }));
+  now += 100;
+  await act(async () => body.props.onResponderMove({ nativeEvent: { pageX: 240, pageY: 100 } }));
+  await act(async () => body.props.onResponderRelease());
+  expect(storyLibrary.reorderStories).toHaveBeenCalledTimes(1);
+  expect(storyLibrary.reorderStories).toHaveBeenCalledWith(['beta', 'alpha']);
+  expect(renderer.root.findByType(FlatList).props.scrollEnabled).toBe(true);
+  expect(onOpen).not.toHaveBeenCalled();
+  deferMeasurement = true;
+  await act(async () => button('Alpha').props.onLongPress({ nativeEvent: { pageX: 240, pageY: 100 } }));
+  await act(async () => body.props.onTouchEnd());
+  await act(async () => pendingMeasurement?.());
+  expect(renderer.root.findAll(item => item.props.testID === 'library-drag-preview')).toHaveLength(0);
+  expect(button('Alpha').props.disabled).toBe(false);
+  expect(storyLibrary.reorderStories).toHaveBeenCalledTimes(1);
 });

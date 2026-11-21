@@ -10,6 +10,7 @@ export interface SavedStory {
 }
 
 export interface StorySummary {
+  libraryOrder?: number;
   id: string;
   title: string;
   updatedAt: string;
@@ -36,6 +37,7 @@ interface StoryLibraryModule {
   emailStory(story: SavedStory): Promise<boolean>;
   saveStory(story: SavedStory): Promise<StorySummary>;
   listStories(): Promise<StorySummary[]>;
+  reorderStories(ids: string[]): Promise<void>;
   loadStory(id: string): Promise<SavedStory>;
   deleteStory(id: string): Promise<{ token: string }>;
   restoreStory(token: string): Promise<StorySummary>;

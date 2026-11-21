@@ -18,4 +18,4 @@ The extended Layout section adds Auto arrange (the green PanelsTopLeft + Sparkle
 
 The border-style toolbar icon uses three horizontal lines: solid on top, dashed in the middle and dotted at the bottom, all with identical visible endpoints; its four menu choices retain their individual appearances. The artwork-lock overlay sits toward the outer right edge while leaving the circular button outline visible.
 
-Layout and Drawing now have equal-height explanation panels. The Read card is raised to align with Library, and the former full-width benefits footer is placed beneath Read.
+Drawing begins lower than Layout to make room for the actual page controls (previous triangle, minus, plus and next triangle) beside the page caption, linked to the single original counter by a filled purple elbow arrow and Click to open label; both panels retain the same bottom edge. The Read card is raised to align with Library, and the former full-width benefits footer is placed beneath Read.

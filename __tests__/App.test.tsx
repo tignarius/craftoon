@@ -357,6 +357,37 @@ test('reader emails the displayed preview without exporting the background draft
   expect(storyLibrary.emailStory).toHaveBeenCalledWith(savedOther);
 });
 
+test('reader entry clears old email progress and a late completion cannot clear a newer request', async () => {
+  let finishFirst!: (value: boolean) => void;
+  let finishSecond!: (value: boolean) => void;
+  (storyLibrary.emailStory as jest.Mock)
+    .mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { finishSecond = resolve; }));
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'reader'));
+  expect(renderer.root.findByType(Header).props.emailing).toBe(false);
+  await act(async () => { void renderer.root.findByType(Header).props.onEmail(); });
+  expect(renderer.root.findByType(Header).props.emailing).toBe(true);
+  await act(async () => renderer.root.findByType(Header).props.onEdit());
+  await act(async () => renderer.root.findByType(Header).props.onRead());
+  expect(renderer.root.findByType(Header).props.emailing).toBe(false);
+  await act(async () => { void renderer.root.findByType(Header).props.onEmail(); });
+  expect(renderer.root.findByType(Header).props.emailing).toBe(true);
+  await act(async () => finishFirst(false));
+  expect(renderer.root.findByType(Header).props.emailing).toBe(true);
+  await act(async () => finishSecond(false));
+  expect(renderer.root.findByType(Header).props.emailing).toBe(false);
+});
+
+test('email cancellation and failure restore the reader email button', async () => {
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onOpen('book', 'reader'));
+  await act(async () => renderer.root.findByType(Header).props.onEmail());
+  expect(renderer.root.findByType(Header).props.emailing).toBe(false);
+  (storyLibrary.emailStory as jest.Mock).mockRejectedValueOnce(new Error('presentation failed'));
+  await act(async () => renderer.root.findByType(Header).props.onEmail());
+  expect(renderer.root.findByType(Header).props.emailing).toBe(false);
+  expect(Alert.alert).toHaveBeenCalledWith('Could not prepare email', expect.any(String));
+});
+
 test('reader emails fresh native ink from the current canvas and canvas cannot export', async () => {
   await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
   await chooseFormat();

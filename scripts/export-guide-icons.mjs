@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 const root = path.resolve(import.meta.dirname, '..');
 const names = ['square-pen','grid-2x2','file','library-big','download','glasses',
-  'undo-2','redo-2','pen','image','move','trash-2','plus','eye-off','rotate-cw',
+  'undo-2','redo-2','pen','image','move','trash-2','plus','minus','eye-off','rotate-cw',
   'maximize-2','blend','check','settings-2','mail','printer','eraser','lasso-select','palette','zoom-in','zoom-out','eye','panels-top-left','sparkles','lock-keyhole','lock-keyhole-open'];
 const result = {};
 for (const name of names) {

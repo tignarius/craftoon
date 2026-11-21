@@ -1554,3 +1554,95 @@ final class CraftoonPanelShapeTests: XCTestCase {
     XCTAssertEqual(counts["none"], 0)
   }
 }
+
+@MainActor
+final class CraftoonMailPresentationTests: XCTestCase {
+  private final class DeferredPresenter: UIViewController {
+    var pendingPresentation: (() -> Void)?
+    override func present(_ viewControllerToPresent: UIViewController, animated flag: Bool, completion: (() -> Void)? = nil) {
+      pendingPresentation = completion
+    }
+  }
+
+  func testPreparingMailIsNotRejectedBeforeItsPresentationCompletes() async throws {
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 500, height: 500))
+    let presenter = DeferredPresenter()
+    window.rootViewController = presenter
+    window.makeKeyAndVisible()
+    defer { window.isHidden = true }
+    presenter.loadViewIfNeeded()
+    let library = CraftoonLibrary()
+    var completions = 0
+    library.presentEmailController(UIViewController(), from: presenter) { _, _ in completions += 1 }
+    try await Task.sleep(nanoseconds: 50_000_000)
+    XCTAssertEqual(completions, 0, "A Mail controller may not have a presentingViewController during asynchronous setup")
+    XCTAssertNotNil(presenter.pendingPresentation)
+    presenter.pendingPresentation?()
+    XCTAssertEqual(completions, 0, "Showing Mail is not a send/cancel completion")
+  }
+
+  func testInteractiveDismissalCompletesOnlyTheObservedMailWindowOnce() {
+    let controller = UIViewController()
+    var completions = 0
+    let observer = CraftoonMailDismissalObserver(controller: controller) { completions += 1 }
+    observer.presentationControllerDidDismiss(UIPresentationController(presentedViewController: UIViewController(), presenting: nil))
+    XCTAssertEqual(completions, 0)
+    let presentation = UIPresentationController(presentedViewController: controller, presenting: nil)
+    observer.presentationControllerDidDismiss(presentation)
+    observer.presentationControllerDidDismiss(presentation)
+    XCTAssertEqual(completions, 1)
+  }
+}
+
+final class CraftoonLibraryOrderTests: XCTestCase {
+  private func list(_ library: CraftoonLibrary) async throws -> [[String: Any]] {
+    try await withCheckedThrowingContinuation { continuation in
+      library.listStories({ value in continuation.resume(returning: value as? [[String: Any]] ?? []) },
+        rejecter: { _, _, error in continuation.resume(throwing: error ?? NSError(domain: "test", code: 1)) })
+    }
+  }
+  private func reorder(_ library: CraftoonLibrary, _ ids: [String]) async throws {
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+      library.reorderStories(ids as NSArray, resolver: { _ in continuation.resume() },
+        rejecter: { _, _, error in continuation.resume(throwing: error ?? NSError(domain: "test", code: 1)) })
+    }
+  }
+  private func save(_ id: String, date: String, root: URL) throws -> Data {
+    let folder = root.appendingPathComponent("CraftoonLibrary")
+    try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+    let data = try JSONSerialization.data(withJSONObject: ["id": id, "title": id, "createdAt": date, "updatedAt": date,
+      "pages": [["id": "p", "panels": [], "bubbles": []]], "storageVersion": 2,
+      "thumbnailVersion": 3, "thumbnailData": "data:image/png;base64,"])
+    try data.write(to: folder.appendingPathComponent(id + ".json"))
+    return data
+  }
+  func testOrderSurvivesReloadAndNewComicsPrecedeItWithoutChangingComicFiles() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let original = try save("a", date: "2026-11-01T00:00:00Z", root: root)
+    _ = try save("b", date: "2026-11-02T00:00:00Z", root: root)
+    let library = CraftoonLibrary(storageRoot: root)
+    let initial = try await list(library)
+    XCTAssertEqual(initial.compactMap { $0["id"] as? String }, ["b", "a"])
+    try await reorder(library, ["a", "b"])
+    let reloaded = try await list(CraftoonLibrary(storageRoot: root))
+    XCTAssertEqual(reloaded.compactMap { $0["id"] as? String }, ["a", "b"])
+    XCTAssertEqual(reloaded.compactMap { $0["libraryOrder"] as? Int }, [0, 1])
+    XCTAssertEqual(try Data(contentsOf: root.appendingPathComponent("CraftoonLibrary/a.json")), original)
+    _ = try save("c", date: "2026-11-03T00:00:00Z", root: root)
+    let fresh = try await list(library)
+    XCTAssertEqual(fresh.compactMap { $0["id"] as? String }, ["c", "a", "b"])
+  }
+  func testInvalidOrderCannotOverwriteLastSavedOrder() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    _ = try save("a", date: "2026-11-01", root: root)
+    let library = CraftoonLibrary(storageRoot: root)
+    try await reorder(library, ["a"])
+    for invalid in [["a", "a"], ["missing"], ["../outside"]] {
+      do { try await reorder(library, invalid); XCTFail("Invalid order accepted") } catch { }
+    }
+    let order = try Data(contentsOf: root.appendingPathComponent("CraftoonLibrary/Metadata/order.json"))
+    XCTAssertEqual(try JSONDecoder().decode([String].self, from: order), ["a"])
+  }
+}

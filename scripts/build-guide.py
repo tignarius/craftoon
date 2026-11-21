@@ -218,7 +218,7 @@ def portrait_header(mode,x,y,width=535):
             else: draw_icon(c,name,cx,cy,20,color,2.5 if name=='download' else 2)
         page=(x+width-29,cy)
         draw_box(c,page[0]-18,cy-13,36,26,'#FFFFFF','#E8EDF2',r=6)
-        centered(page[0],cy-3,'1 / 1',8.5,GRAY)
+        centered(page[0],cy-3,'2 / 3',8.5,GRAY)
         return [(cx,cy) for cx in centers]+[page]
     if mode=='library':
         centers=[x+24,x+80,x+width-78,x+width-26]
@@ -398,6 +398,25 @@ def selected_comic(x,y,width):
     c.restoreState()
 
 
+def page_controls():
+    # PageNavigator.tsx: four 32 pt buttons with the original gaps/padding.
+    # Filled triangles use PageArrow.tsx's actual 10 x 14 pt geometry.
+    x,y,scale=442.4,650,.4
+    c.saveState(); c.translate(x,y); c.scale(scale,scale)
+    draw_box(c,0,0,143,38,'#F8FAFC','#DCE1E8',r=12)
+    for i,name in enumerate(['previous','minus','plus','next']):
+        cx=19+i*35
+        draw_box(c,cx-16,3,32,32,'#FFFFFF',r=8)
+        if name in ('previous','next'):
+            direction=-1 if name=='previous' else 1
+            p=c.beginPath(); p.moveTo(cx+direction*5,19)
+            p.lineTo(cx-direction*5,26); p.lineTo(cx-direction*5,12); p.close()
+            c.setFillColor(HexColor('#64748B')); c.drawPath(p,stroke=0,fill=1)
+        else: draw_icon(c,name,cx,19,18,'#64748B',2)
+    c.restoreState()
+    text(360.4,655,'Insert or delete pages.',7,GRAY)
+
+
 def portrait():
     c.saveState()
     c.translate(0,30)
@@ -411,33 +430,54 @@ def portrait():
     mode_card(304,103,269,194,'reader','03','READ')
 
     targets=portrait_header('canvas',34,667,527)
-    for target,label in list(zip(targets,['Canvas mode','Library','Read','New','Save','Templates','Auto arrange','Undo','Redo','Pages']))[1:]:
+    for target,label in list(zip(targets,['Canvas mode','Library','Read','New','Save','Templates','Auto arrange','Undo','Redo','Pages']))[1:-1]:
         centered(target[0],727,label,7.3,INK,'Helvetica-Bold')
         solid_arrow((target[0],720),target,gap=18)
 
-    # The extended orange Drawing group owns the Background Image controls.
+    page=targets[-1]
+    centered(page[0],727,'Pages',7.3,INK,'Helvetica-Bold')
+    solid_arrow((page[0],720),page,gap=18)
+    page_controls()
+    # A filled, rounded elbow leads from the real counter to its revealed menu.
+    # Stop six points short of the menu so the arrow cannot cover an icon.
+    p=c.beginPath(); p.moveTo(531.3,675); p.lineTo(531.3,667.6)
+    p.curveTo(531.3,662.464,527.136,658.3,522,658.3)
+    p.lineTo(511.6,658.3); p.lineTo(511.6,660.8); p.lineTo(505.6,657.6)
+    p.lineTo(511.6,654.4); p.lineTo(511.6,656.9); p.lineTo(522,656.9)
+    p.curveTo(527.91,656.9,532.7,661.69,532.7,667.6)
+    p.lineTo(532.7,675); p.close()
+    c.setFillColor(HexColor(PURPLE)); c.drawPath(p,stroke=0,fill=1)
+    centered(518,643,'Click to open',6.5,PURPLE)
+
+    # Lower Drawing's top edge while retaining the shared bottom edge.
     draw_box(c,30,313,264,348,'#F1FBF8','#D3EBE3',r=7)
-    draw_box(c,304,313,259,348,'#FFF1DF','#F0D2A9',r=7)
+    draw_box(c,304,313,259,312,'#FFF1DF','#F0D2A9',r=7)
     mode_sentence(40,646,'Layout mode:','Create and arrange panels.',TEAL)
-    mode_sentence(314,646,'Drawing mode:','Draw inside a panel.','#B76D20')
+    mode_sentence(314,610,'Drawing mode:','Draw inside a panel.','#B76D20')
     layout=panel_top(40,600,244,'layout')
-    drawing=panel_top(314,600,239,'draw')
-    for target,label in zip(layout+drawing,['Switch mode','Border style','Lock artwork','Delete panel','Switch mode','Zoom','Add image']):
+    drawing=panel_top(314,564,239,'draw')
+    for index,(target,label) in enumerate(zip(layout+drawing,['Switch mode','Border style','Lock artwork','Delete panel','Switch mode','Zoom','Add image'])):
+        offset=36 if index>=len(layout) else 0
         caption_x=target[0]
         if label in ('Border style','Lock artwork'):
             first,second=label.split(' ')
-            centered(caption_x,580,first,7,GRAY)
-            centered(caption_x,570,second,7,GRAY)
-        else: centered(caption_x,580,label,7,GRAY)
-        solid_arrow((caption_x,590),target,TEAL,gap=13)
+            centered(caption_x,580-offset,first,7,GRAY)
+            centered(caption_x,570-offset,second,7,GRAY)
+        else: centered(caption_x,580-offset,label,7,GRAY)
+        solid_arrow((caption_x,590-offset),target,TEAL,gap=13)
     layout_extras()
+    c.saveState(); c.translate(0,-36)
     panel_zoom()
+    c.restoreState()
+    c.saveState(); c.translate(0,-28)
     text(314,475,'Background Image Manipulator',7.2,'#B76D20','Helvetica-Bold')
     ref=reference(c,314,380,239)
     for i,label in enumerate(['Show / hide','Move','Rotate','Scale','Opacity','Delete','Done']):
         target=ref(12+i*17.2,33)
         centered(target[0],367,label,5.8,GRAY)
         solid_arrow((target[0],376),target,TEAL,gap=14)
+
+    c.restoreState()
 
     c.saveState(); c.translate(0,-112)
     # Real Library header, with the selected comic alongside compact actions.
@@ -496,7 +536,7 @@ assert len(document.pages)==1
 page=document.pages[0]
 extracted=' '.join(page.extract_text().split())
 assert not any('\uac00'<=char<='\ud7a3' for char in extracted)
-expected_labels=['Auto arrange','Lock artwork','Artwork follows the panel unless locked.','CANVAS','Border style','Resize / reshape','Solid','Dashed','Dotted','No border','Zoom','Panel zoom','Enlarge only this panel.','Click again to return.','Layout mode:','Drawing mode:','Background Image Manipulator','LIBRARY','READ','Opacity','Canvas','FREE','Up to 4 pages per comic','Save 1 comic at a time','Unlimited pages per comic','Save unlimited comics']
+expected_labels=['Click to open','Insert or delete pages.','Pages','Auto arrange','Lock artwork','Artwork follows the panel unless locked.','CANVAS','Border style','Resize / reshape','Solid','Dashed','Dotted','No border','Zoom','Panel zoom','Enlarge only this panel.','Click again to return.','Layout mode:','Drawing mode:','Background Image Manipulator','LIBRARY','READ','Opacity','Canvas','FREE','Up to 4 pages per comic','Save 1 comic at a time','Unlimited pages per comic','Save unlimited comics']
 assert 'PencilKit' not in extracted
 for expected in expected_labels:
     assert expected in extracted,expected
