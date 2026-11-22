@@ -25,6 +25,7 @@ import {
 
 interface HeaderProps {
   reading?: boolean;
+  horizontalInset?: number;
   pageMenuDismissSignal?: number;
   showHistory?: boolean;
   canUndo?: boolean;
@@ -52,7 +53,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  reading = false,
+  reading = false, horizontalInset,
   pageMenuDismissSignal,
   currentPageIndex, totalPages,
   showHistory = false, canUndo = false, canRedo = false, onUndo, onRedo,
@@ -72,7 +73,7 @@ export const Header: React.FC<HeaderProps> = ({
     measureCanvasPickerAnchor(newButton, onNewStory);
   };
   return (
-    <ScreenHeader mode={reading ? 'reader' : 'canvas'} pageCount={totalPages} onPrint={reading ? onPrint : undefined} printDisabled={emailing}
+    <ScreenHeader horizontalInset={horizontalInset} mode={reading ? 'reader' : 'canvas'} pageCount={totalPages} onPrint={reading ? onPrint : undefined} printDisabled={emailing}
       onEmail={reading ? onEmail : undefined} emailLabel="Email comic" emailing={emailing}
       trailing={!reading ? <PageNavigator dismissSignal={pageMenuDismissSignal} currentPageIndex={currentPageIndex} totalPages={totalPages}
         onPrevious={onPrevPage} onNext={onNextPage} onAddPage={onAddPage} onDeletePage={onDeletePage} /> : undefined}>

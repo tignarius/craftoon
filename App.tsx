@@ -17,7 +17,7 @@ import { ComicReader } from './src/components/ComicReader';
 import LibraryScreen from './src/LibraryScreen';
 import { storyLibrary, SavedStory } from './src/services/storyLibrary';
 import { CanvasOrientationPicker, CanvasPickerAnchor } from './src/components/CanvasOrientationPicker';
-import { canvasSizeFor, CanvasOrientation, pageCanvasSize, pageOrientation } from './src/utils/canvasFormat';
+import { CANVAS_VIEW_INSET, canvasSizeFor, CanvasOrientation, pageCanvasSize, pageOrientation } from './src/utils/canvasFormat';
 import { lockCanvasOrientation } from './src/services/canvasOrientation';
 import { sameComicPages } from './src/utils/comicContent';
 import { neighboringHandleSide } from './src/utils/panelGeometry';
@@ -44,6 +44,7 @@ import {
 function CraftoonApp(): React.JSX.Element {
   const { status: { isPro }, requirePro, infoOpen } = usePro();
   const { width, height } = useWindowDimensions();
+  const [canvasHeaderInset, setCanvasHeaderInset] = useState(CANVAS_VIEW_INSET.horizontal);
   const [appState, setAppState] = useState(AppState.currentState ?? 'active');
   useEffect(() => {
     const subscription = AppState.addEventListener('change', setAppState);
@@ -1001,6 +1002,7 @@ function CraftoonApp(): React.JSX.Element {
         <SaveComicDialog visible={saveDialogVisible} name={saveName} saving={submittingName}
           error={saveError} onChangeName={setSaveName} onSave={confirmSaveName} onCancel={cancelSaveName} />
           <Header
+            horizontalInset={currentScreen === 'editor' ? canvasHeaderInset : undefined}
             pageMenuDismissSignal={pageMenuDismissSignal}
             reading={currentScreen === 'reader'}
             showHistory={history.length > 0}
@@ -1034,6 +1036,7 @@ function CraftoonApp(): React.JSX.Element {
             <ComicReader key={pageOrientation(displayedPages[displayedPageIndex])} pages={displayedPages} pageIndex={displayedPageIndex}
               onPageChange={readingPreview ? setPreviewPageIndex : setCurrentPageIndex} />
           ) : <Workspace
+            onCanvasInsetChange={setCanvasHeaderInset}
             onImportTracingImage={handleImportTracingImage}
             importingTracingImage={importingTracingImage}
             editingTracingPanelId={editingTracingPanelId}

@@ -3,6 +3,7 @@ import ReactTestRenderer, { act } from 'react-test-renderer';
 import { TouchableOpacity } from 'react-native';
 import { PageNavigator } from '../src/components/PageNavigator';
 import { ScreenHeader } from '../src/components/ScreenHeader';
+import { Dimensions, StyleSheet, View } from 'react-native';
 import { Header } from '../src/components/Header';
 
 jest.mock('lucide-react-native', () => {
@@ -100,4 +101,19 @@ test('auto arrange is next to templates, disabled on an empty canvas, and absent
   expect(arrange).toHaveBeenCalledTimes(1);
   await act(async () => renderer.update(<Header {...props} onAutoArrange={arrange} canAutoArrange reading />));
   expect(button('Auto arrange panels')).toBeUndefined();
+});
+
+
+test.each([
+  [756, 1158, 34], [1158, 756, 34],
+  [810, 1080, 20], [820, 1180, 20], [1032, 1376, 20],
+])('header aligns small screens without changing larger iPads at %s x %s', async (width, height, expected) => {
+  const original = Dimensions.get('window');
+  try {
+    Dimensions.set({ window: { ...original, width, height } });
+    await act(async () => { renderer = ReactTestRenderer.create(<Header {...props} horizontalInset={34} />); });
+    const header = renderer.root.findAllByType(View).find(view =>
+      view.props.onLayout && StyleSheet.flatten(view.props.style)?.height === 56)!;
+    expect(StyleSheet.flatten(header.props.style).paddingHorizontal).toBe(expected);
+  } finally { await act(async () => Dimensions.set({ window: original })); }
 });

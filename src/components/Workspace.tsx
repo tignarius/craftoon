@@ -25,6 +25,7 @@ function snapCoordinate(value: number, targets: number[]) {
 const WORKSPACE_PADDING = 12; // 원고지 안쪽 최소 여백 (좌우/상하 균등한 중간값)
 
 interface WorkspaceProps {
+  onCanvasInsetChange?: (inset: number) => void;
   onImportTracingImage?: (panelId: string) => void;
   importingTracingImage?: boolean;
   editingTracingPanelId?: string | null;
@@ -51,6 +52,7 @@ interface WorkspaceProps {
 }
 
 export const Workspace: React.FC<WorkspaceProps> = ({
+  onCanvasInsetChange,
   onImportTracingImage,
   importingTracingImage = false,
   editingTracingPanelId,
@@ -87,6 +89,11 @@ export const Workspace: React.FC<WorkspaceProps> = ({
   const focusedPanel = panels.find(p => p.id === focusedPanelId && panelModes[p.id] === 'draw');
   const focus = focusedPanel ? panelFocusTransform(focusedPanel, viewport, canvasSize) : null;
   const scale = fitCanvas(canvasSize, viewport);
+  useEffect(() => {
+    if (viewport.width > 1 && viewport.height > 1) {
+      onCanvasInsetChange?.((viewport.width - canvasSize.width * scale) / 2);
+    }
+  }, [viewport.width, viewport.height, canvasSize.width, scale, onCanvasInsetChange]);
   useEffect(() => { if (!focusedPanel) { setFocusedPanelId(null); } }, [focusedPanel]);
   // Changing sibling order can detach/reinsert a live PencilKit view in Fabric.
   // Keep native siblings stable; only their explicit stacking values change.

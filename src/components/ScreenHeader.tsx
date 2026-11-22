@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
-import { ActivityIndicator, SafeAreaView, StyleSheet, TouchableOpacity, View } from 'react-native';
+import { ActivityIndicator, SafeAreaView, StyleSheet, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Mail, Printer } from 'lucide-react-native';
 import { ModeInfoButton } from './ModeInfoButton';
 import { AppMode } from '../access/accessPolicy';
+import { CANVAS_VIEW_INSET } from '../utils/canvasFormat';
 import { iconColors, screenChrome } from './screenChrome';
 
 interface ScreenHeaderProps {
   mode?: AppMode;
+  horizontalInset?: number;
   pageCount?: number;
   onPrint?: () => void;
   onEmail?: () => void;
@@ -21,9 +23,14 @@ interface ScreenHeaderProps {
   trailing?: React.ReactNode;
 }
 
-export function ScreenHeader({ mode, pageCount, onPrint,
+export function ScreenHeader({ mode, horizontalInset, pageCount, onPrint,
   printLabel = 'Print comic', printDisabled = false, printing = false,
   onEmail, emailLabel = 'Email selected comic', emailDisabled = false, emailing = false, children, center, trailing }: ScreenHeaderProps) {
+  const window = useWindowDimensions();
+  // Use the shorter side so rotating a mini keeps the same inset policy.
+  // Larger iPads retain their existing header spacing.
+  const compactTablet = Math.min(window.width, window.height) < 800;
+  const inset = compactTablet ? horizontalInset ?? CANVAS_VIEW_INSET.horizontal : 20;
   const [headerWidth, setHeaderWidth] = useState(0);
   const [navigationWidth, setNavigationWidth] = useState(0);
   const [actionsWidth, setActionsWidth] = useState(0);
@@ -33,7 +40,7 @@ export function ScreenHeader({ mode, pageCount, onPrint,
   const stacked = !!center && headerWidth > 0 &&
     Math.max(navigationWidth, actionsWidth) + centerWidth / 2 + 28 > headerWidth / 2;
   return <SafeAreaView style={screenChrome.safeHeader}>
-    <View style={[screenChrome.header, stacked && styles.stacked]}
+    <View style={[screenChrome.header, { paddingHorizontal: inset }, stacked && styles.stacked]}
       onLayout={event => setHeaderWidth(event.nativeEvent.layout.width)}>
       <View style={styles.navigation} onLayout={event => setNavigationWidth(event.nativeEvent.layout.width)}>
         {mode && <><ModeInfoButton mode={mode} pageCount={pageCount} /><View style={styles.modeDivider} /></>}
