@@ -173,6 +173,7 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				C4D59A102D00000000000001 /* Copy verified Hermes dSYM */,
 			);
 			buildRules = (
 			);
@@ -339,6 +340,19 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Craftoon/Pods-Craftoon-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		C4D59A102D00000000000001 /* Copy verified Hermes dSYM */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ("$(SRCROOT)/../scripts/hermes-dsym.sh",);
+			name = "Copy verified Hermes dSYM";
+			outputPaths = ();
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/../scripts/hermes-dsym.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
