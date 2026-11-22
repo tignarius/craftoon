@@ -819,6 +819,28 @@ class CraftoonLibrary: NSObject, MFMailComposeViewControllerDelegate {
     }
   }
 
+  @objc func renameStory(_ id: String, title: String,
+                         resolver resolve: @escaping RCTPromiseResolveBlock,
+                         rejecter reject: @escaping RCTPromiseRejectBlock) {
+    storageQueue.async {
+      do {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw NSError(domain: "CraftoonLibrary", code: 9) }
+        let url = try self.storyURL(id)
+        var document = try decodeComicDocument(Data(contentsOf: url))
+        document["createdAt"] = self.creationTimestamp(document, at: url)
+        document["title"] = name
+        document["updatedAt"] = ISO8601DateFormatter().string(from: Date())
+        try encodeComicDocument(document).write(to: url, options: .atomic)
+        let summary = self.summary(document)
+        DispatchQueue.main.async {
+          CraftoonDraftRecovery.shared.markSaved(id: id, title: name)
+          resolve(summary)
+        }
+      } catch { reject("RENAME_FAILED", "Could not rename this comic.", error) }
+    }
+  }
+
   private func libraryOrderURL() throws -> URL {
     let folder = try directory().appendingPathComponent("Metadata", isDirectory: true)
     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

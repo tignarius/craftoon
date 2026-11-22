@@ -454,9 +454,9 @@ function CraftoonApp(): React.JSX.Element {
     } finally { savingRef.current = false; }
   };
 
-  const returnToCanvas = async () => {
+  const returnToCanvas = async (anchor?: CanvasPickerAnchor) => {
     if (savingRef.current) { return; }
-    if (!hasCanvasSessionRef.current) { requestFormat('new'); return; }
+    if (!hasCanvasSessionRef.current) { requestFormat('new', anchor); return; }
     savingRef.current = true;
     try {
       await storyLibrary.restorePages(pages);
@@ -980,6 +980,12 @@ function CraftoonApp(): React.JSX.Element {
 
   if (currentScreen === 'library') {
     return wrap(<LibraryScreen onHome={returnToCanvas} onOpen={handleOpenStory}
+      onRenamed={(id, title) => {
+        if (id === storyId) { setStoryTitle(title); }
+        const entries = historyState.current.entries.map(entry => entry.storyId === id ? { ...entry, title } : entry);
+        historyState.current = { ...historyState.current, entries };
+        setHistory(entries);
+      }}
       onDeleted={id => {
         if (id === storyId) {
           handleNewStory();

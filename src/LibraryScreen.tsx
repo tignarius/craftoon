@@ -6,8 +6,8 @@ import {
   Alert,
   FlatList,
   Image,
-  Pressable,
   StatusBar,
+  Keyboard,
   Platform,
   StyleSheet,
   TouchableOpacity,
@@ -17,24 +17,32 @@ import {
 import { usePro } from './access/ProProvider';
 import { compareStoryOrder, libraryDropTarget, LibraryCardFrame } from './utils/storyOrder';
 import { coverAspectRatio } from './utils/canvasFormat';
+import { CanvasPickerAnchor, measureCanvasPickerAnchor } from './components/CanvasOrientationPicker';
 import { ScreenHeader } from './components/ScreenHeader';
 import { iconColors, screenChrome } from './components/screenChrome';
-import { AppText as Text } from './components/AppText';
+import { AppText as Text, AppTextInput as TextInput } from './components/AppText';
 import { BookOpen, Glasses, SquarePen, Trash2 } from 'lucide-react-native';
 import { storyLibrary, StorySummary } from './services/storyLibrary';
 
 interface LibraryScreenProps {
-  onHome: () => void;
+  onHome: (anchor?: CanvasPickerAnchor) => void;
   onOpen: (id: string, mode: 'reader' | 'editor') => Promise<void>;
   onDeleted: (id: string) => void;
+  onRenamed?: (id: string, title: string) => void;
 }
 
-export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScreenProps) {
+export default function LibraryScreen({ onHome, onOpen, onDeleted, onRenamed }: LibraryScreenProps) {
   const { width } = useWindowDimensions();
   const { requirePro } = usePro();
   const columns = Math.min(4, Math.max(2, Math.floor(width / 240)));
   const cardWidth = (width - 32 - 16 * (columns - 1)) / columns;
   const [stories, setStories] = useState<StorySummary[]>([]);
+  const [renaming, setRenaming] = useState<StorySummary | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [savingTitle, setSavingTitle] = useState(false);
+  const savingTitleRef = useRef(false);
+  const renameActiveRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [openingId, setOpeningId] = useState<string | null>(null);
@@ -46,6 +54,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
   const [deleted, setDeleted] = useState<{ token: string; story: StorySummary } | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [reordering, setReordering] = useState(false);
+  const canvasButtonRef = useRef<View>(null);
   const bodyRef = useRef<View>(null);
   const listRef = useRef<FlatList<StorySummary>>(null);
   const cardRefs = useRef(new Map<string, View>());
@@ -63,6 +72,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const busyRef = useRef(false);
+  const backgroundTouch = useRef<{ x: number; y: number } | null>(null);
   const lastCardPressRef = useRef<{ id: string; time: number } | null>(null);
 
   useEffect(() => {
@@ -295,7 +305,46 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
     } finally { setEmailing(false); busyRef.current = false; }
   };
 
-  const controlsDisabled = openingId !== null || deletingId !== null || printing || emailing || reordering;
+  const beginRename = (story: StorySummary) => {
+    if (busyRef.current || Date.now() < suppressPressUntil.current) return;
+    lastCardPressRef.current = null;
+    busyRef.current = true;
+    setRenameTitle(story.title);
+    setRenameError(null);
+    renameActiveRef.current = true;
+    setRenaming(story);
+  };
+
+  const cancelRename = () => {
+    if (savingTitleRef.current) return;
+    renameActiveRef.current = false;
+    setRenaming(null);
+    setRenameError(null);
+    busyRef.current = false;
+    Keyboard.dismiss();
+  };
+
+  const saveTitle = async () => {
+    if (!renaming || !renameActiveRef.current || savingTitleRef.current) return;
+    const title = renameTitle.trim();
+    if (!title || title === renaming.title) { cancelRename(); return; }
+    savingTitleRef.current = true;
+    setSavingTitle(true);
+    setRenameError(null);
+    try {
+      const updated = await storyLibrary.renameStory(renaming.id, title);
+      setStories(items => items.map(item => item.id === renaming.id ? { ...item, ...updated } : item));
+      onRenamed?.(renaming.id, title);
+      renameActiveRef.current = false;
+      setRenaming(null);
+      busyRef.current = false;
+      Keyboard.dismiss();
+    } catch {
+      setRenameError('Could not save title. Try again.');
+    } finally { savingTitleRef.current = false; setSavingTitle(false); }
+  };
+
+  const controlsDisabled = renaming !== null || openingId !== null || deletingId !== null || printing || emailing || reordering;
   const draggedStory = stories.find(item => item.id === draggingId);
   return (
     <View style={styles.root}>
@@ -304,10 +353,10 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
         printDisabled={!selectedId || controlsDisabled} printing={printing}
         onEmail={emailSelected} emailing={emailing}
         emailDisabled={controlsDisabled}>
-        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Open Canvas"
+        <TouchableOpacity ref={canvasButtonRef} accessibilityRole="button" accessibilityLabel="Open Canvas"
           accessibilityHint={selectedId ? 'Edit the selected comic' : 'Return to your current canvas'}
           disabled={controlsDisabled}
-          style={screenChrome.action} onPress={() => selectedId ? open(selectedId, 'editor') : onHome()} activeOpacity={0.7}>
+          style={screenChrome.action} onPress={() => selectedId ? open(selectedId, 'editor') : measureCanvasPickerAnchor(canvasButtonRef, onHome)} activeOpacity={0.7}>
           <SquarePen size={22} color={iconColors.canvas} />
         </TouchableOpacity>
       </ScreenHeader>
@@ -323,7 +372,25 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
       onTouchEnd={() => finishDrag()}
       onTouchCancel={() => finishDrag(true)}
       testID="library-drag-surface" accessible={false} style={styles.libraryBody}>
-      <Pressable testID="library-background" accessible={false} style={styles.libraryBody} onPress={clearSelection}>
+      <View testID="library-background" accessible={false} style={styles.libraryBody}
+        onStartShouldSetResponderCapture={event => {
+          const { pageX, pageY } = event.nativeEvent;
+          backgroundTouch.current = { x: pageX, y: pageY };
+          return false;
+        }}
+        onTouchMove={event => {
+          const start = backgroundTouch.current;
+          if (start && Math.hypot(event.nativeEvent.pageX - start.x, event.nativeEvent.pageY - start.y) > 8) {
+            backgroundTouch.current = null;
+          }
+        }}
+        onTouchCancel={() => { backgroundTouch.current = null; }}
+        onTouchEnd={() => {
+          const tap = backgroundTouch.current;
+          backgroundTouch.current = null;
+          if (!tap) return;
+          if (renaming) { void saveTitle(); } else { clearSelection(); }
+        }}>
       {loading ? <ActivityIndicator style={styles.center} color="#0D9488" /> : error ? (
         <View style={styles.center}>
           <Text style={styles.emptyTitle}>Could not open your library</Text>
@@ -333,13 +400,16 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
         </View>
       ) : (
         <FlatList ref={listRef} scrollEnabled={!draggingId}
+          automaticallyAdjustKeyboardInsets
+          keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
+          onScrollBeginDrag={() => { backgroundTouch.current = null; }}
           onScroll={event => { scrollOffset.current = event.nativeEvent.contentOffset.y; }} scrollEventThrottle={16}
           onContentSizeChange={(_, h) => { contentHeight.current = h; }}
           key={`gallery-${columns}`}
           numColumns={columns}
           columnWrapperStyle={styles.galleryRow}
           data={stories}
-          extraData={{ selectedId, openingId, deletingId, printing, emailing, draggingId, reordering }}
+          extraData={{ selectedId, openingId, deletingId, printing, emailing, draggingId, reordering, renaming, renameTitle, renameError, savingTitle }}
           keyExtractor={story => story.id}
           contentContainerStyle={stories.length ? styles.gallery : styles.emptyList}
           ListEmptyComponent={
@@ -351,12 +421,15 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
           }
           renderItem={({ item }) => (
             <TouchableOpacity ref={node => { if (node) cardRefs.current.set(item.id, node); else { cardRefs.current.delete(item.id); framesRef.current.delete(item.id); } }}
+              onPressIn={() => { backgroundTouch.current = null; }}
               onLayout={() => measureCard(item.id)}
               onLongPress={event => beginDrag(item.id, event)} delayLongPress={350}
+              accessible={renaming?.id !== item.id}
               accessibilityLabel={item.title}
               accessibilityHint="Tap to show actions. Double-tap to open in Canvas. Tap again after a pause to deselect. Hold and drag to reorder."
               accessibilityState={{ selected: selectedId === item.id, disabled: controlsDisabled }}
               accessibilityActions={[
+                { name: 'rename', label: 'Rename comic' },
                 { name: 'edit', label: 'Edit comic' },
                 { name: 'open', label: 'Read comic' },
                 { name: 'moveEarlier', label: 'Move comic earlier' },
@@ -364,6 +437,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
                 ...(selectedId === item.id ? [{ name: 'delete', label: 'Delete comic' }] : []),
               ]}
               onAccessibilityAction={event => {
+                if (event.nativeEvent.actionName === 'rename') beginRename(item);
                 if (event.nativeEvent.actionName === 'moveEarlier') reorderAccessible(item.id, -1);
                 if (event.nativeEvent.actionName === 'moveLater') reorderAccessible(item.id, 1);
                 if (event.nativeEvent.actionName === 'open') { open(item.id); }
@@ -403,8 +477,36 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
                   <View style={styles.loadingOverlay}><ActivityIndicator color="#0D9488" /></View>
                 )}
               </View>
-              <View style={styles.storyDetails}>
-                <Text numberOfLines={1} style={styles.storyTitle}>{item.title}</Text>
+              <View style={styles.storyDetails} onTouchStart={() => { backgroundTouch.current = null; }}>
+                {renaming?.id === item.id ? (
+                  <View>
+                    <TextInput accessibilityLabel="Comic title" testID={`comic-title-input-${item.id}`}
+                      value={renameTitle} onChangeText={setRenameTitle} autoFocus selectTextOnFocus
+                      editable={!savingTitle} maxLength={80} returnKeyType="done" submitBehavior="blurAndSubmit"
+                      autoCorrect={false} style={[styles.storyTitle, styles.titleInput]}
+                      onPressIn={event => event.stopPropagation()}
+                      onSubmitEditing={() => { void saveTitle(); }}
+                      onBlur={() => { void saveTitle(); }}
+                      onKeyPress={event => { if (event.nativeEvent.key === 'Escape') cancelRename(); }} />
+                    {savingTitle && <ActivityIndicator size="small" color="#0D9488" />}
+                    {renameError && <View>
+                      <Text accessibilityRole="alert" style={styles.titleError}>{renameError}</Text>
+                      <View style={styles.renameActions}>
+                        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Retry saving title"
+                          disabled={savingTitle} onPress={() => { void saveTitle(); }} style={styles.renameAction}>
+                          <Text style={styles.link}>Retry</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancel renaming"
+                          disabled={savingTitle} onPress={cancelRename} style={styles.renameAction}>
+                          <Text style={styles.storyMeta}>Cancel</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>}
+                  </View>
+                ) : <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Rename ${item.title}`}
+                  disabled={controlsDisabled} onPress={event => { event.stopPropagation(); beginRename(item); }}>
+                  <Text numberOfLines={1} style={styles.storyTitle}>{item.title}</Text>
+                </TouchableOpacity>}
                 <Text style={styles.storyMeta}>
                   {item.pageCount} {item.pageCount === 1 ? 'page' : 'pages'} · {new Date(item.updatedAt).toLocaleDateString()}
                 </Text>
@@ -422,7 +524,7 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
         <View style={styles.storyDetails}><Text numberOfLines={1} style={styles.storyTitle}>{draggedStory.title}</Text>
           <Text style={styles.storyMeta}>{draggedStory.pageCount} {draggedStory.pageCount === 1 ? 'page' : 'pages'}</Text></View>
       </Animated.View>}
-      </Pressable>
+      </View>
       </View>
       {deleted && (
         <View style={styles.undoBar} accessibilityLiveRegion="polite">
@@ -440,6 +542,10 @@ export default function LibraryScreen({ onHome, onOpen, onDeleted }: LibraryScre
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#F1F5F9' },
   libraryBody: { flex: 1 },
+  titleInput: { padding: 0, paddingVertical: 4, borderBottomWidth: 1, borderBottomColor: '#0D9488' },
+  titleError: { color: '#DC2626', fontSize: 12, marginTop: 4 },
+  renameActions: { flexDirection: 'row', gap: 12 },
+  renameAction: { minHeight: 44, justifyContent: 'center' },
   gallery: { padding: 16, paddingBottom: 100, gap: 20 },
   galleryRow: { gap: 16 },
   emptyList: { flexGrow: 1 },

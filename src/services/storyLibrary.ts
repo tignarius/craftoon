@@ -37,6 +37,7 @@ interface StoryLibraryModule {
   emailStory(story: SavedStory): Promise<boolean>;
   saveStory(story: SavedStory): Promise<StorySummary>;
   listStories(): Promise<StorySummary[]>;
+  renameStory(id: string, title: string): Promise<StorySummary>;
   reorderStories(ids: string[]): Promise<void>;
   loadStory(id: string): Promise<SavedStory>;
   deleteStory(id: string): Promise<{ token: string }>;

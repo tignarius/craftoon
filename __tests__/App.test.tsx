@@ -649,7 +649,10 @@ test('deleting the first of multiple pages retains the following pages in order'
 });
 
 test('new canvas orientation menu retains the pressed button anchor', async () => {
-  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome());
+  const libraryAnchor = { x: 120, y: 30, width: 44, height: 44 };
+  await act(async () => renderer.root.findByType(LibraryScreen).props.onHome(libraryAnchor));
+  expect(renderer.root.findByType(CanvasOrientationPicker).props.anchor).toEqual(libraryAnchor);
+  expect(renderer.root.findByType(CanvasOrientationPicker).props.placement).toBe('below');
   await chooseFormat();
   const anchor = { x: 70, y: 40, width: 44, height: 44 };
   await act(async () => renderer.root.findByType(Header).props.onNewStory(anchor));

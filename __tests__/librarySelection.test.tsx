@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
 import { Alert, Dimensions, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
+import { AppTextInput } from '../src/components/AppText';
 import LibraryScreen from '../src/LibraryScreen';
 import { storyLibrary } from '../src/services/storyLibrary';
 
@@ -11,7 +12,7 @@ jest.mock('../src/access/ProProvider', () => ({
   usePro: () => ({ requirePro: mockRequirePro, openInfo: jest.fn() }),
 }));
 jest.mock('../src/services/storyLibrary', () => ({ storyLibrary: {
-  reorderStories: jest.fn(), loadStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(), listStories: jest.fn(), deleteStory: jest.fn(), restoreStory: jest.fn(),
+  renameStory: jest.fn(), reorderStories: jest.fn(), loadStory: jest.fn(), printStory: jest.fn(), emailStory: jest.fn(), listStories: jest.fn(), deleteStory: jest.fn(), restoreStory: jest.fn(),
 } }));
 
 const initialWindow = Dimensions.get('window');
@@ -123,12 +124,17 @@ test('library prints the selected comic without opening an editor or reader', as
 });
 
 
-test('Canvas returns to the prior draft after deselecting a comic', async () => {
+test('Canvas returns to the prior draft with its measured picker anchor after deselecting a comic', async () => {
+  for (const node of renderer.root.findAll(item => item.props.accessibilityLabel === 'Open Canvas' &&
+    typeof item.instance?.measureInWindow === 'function')) {
+    jest.spyOn(node.instance, 'measureInWindow').mockImplementation((callback: any) => callback(100, 24, 44, 44));
+  }
   jest.spyOn(Date, 'now').mockReturnValueOnce(1000).mockReturnValueOnce(1500);
   await act(async () => button('Alpha').props.onPress());
   await act(async () => button('Alpha').props.onPress());
   await act(async () => button('Open Canvas').props.onPress());
   expect(onHome).toHaveBeenCalledTimes(1);
+  expect(onHome).toHaveBeenCalledWith(expect.objectContaining({ x: 100, y: 24, width: 44, height: 44, measure: expect.any(Function) }));
   expect(onOpen).not.toHaveBeenCalled();
 });
 
@@ -259,7 +265,10 @@ test('clicking empty library space clears selection, actions and double-click ti
   await act(async () => button('Alpha').props.onPress());
   expect(button('Alpha').props.accessibilityState.selected).toBe(true);
   const background = renderer.root.findByProps({ testID: 'library-background' });
-  await act(async () => background.props.onPress());
+  await act(async () => {
+    background.props.onStartShouldSetResponderCapture({ nativeEvent: { pageX: 300, pageY: 400 } });
+    background.props.onTouchEnd();
+  });
   expect(button('Alpha').props.accessibilityState.selected).toBe(false);
   expect(button('Read Alpha')).toBeUndefined();
   expect(button('Edit Alpha')).toBeUndefined();
@@ -347,4 +356,92 @@ test('holding a cover and dragging to the next slot saves one reorder without op
   expect(renderer.root.findAll(item => item.props.testID === 'library-drag-preview')).toHaveLength(0);
   expect(button('Alpha').props.disabled).toBe(false);
   expect(storyLibrary.reorderStories).toHaveBeenCalledTimes(1);
+});
+
+
+const titleInput = () => renderer.root.findByType(AppTextInput);
+
+test('title click edits inside the card and Done saves once despite blur', async () => {
+  (storyLibrary.renameStory as jest.Mock).mockResolvedValueOnce({ ...comic, title: 'New title' });
+  const event = { stopPropagation: jest.fn() };
+  await act(async () => button('Rename Alpha').props.onPress(event));
+  expect(event.stopPropagation).toHaveBeenCalled();
+  expect(titleInput().props.value).toBe('Alpha');
+  await act(async () => titleInput().props.onChangeText('  New title  '));
+  const input = titleInput();
+  await act(async () => { input.props.onSubmitEditing(); input.props.onBlur(); });
+  expect(storyLibrary.renameStory).toHaveBeenCalledTimes(1);
+  expect(storyLibrary.renameStory).toHaveBeenCalledWith('alpha', 'New title');
+  expect(button('Rename New title')).toBeDefined();
+  expect(onOpen).not.toHaveBeenCalled();
+});
+
+test('empty title or Escape leaves the original title', async () => {
+  await act(async () => button('Rename Alpha').props.onPress({ stopPropagation: jest.fn() }));
+  await act(async () => titleInput().props.onChangeText('   '));
+  await act(async () => titleInput().props.onBlur());
+  expect(storyLibrary.renameStory).not.toHaveBeenCalled();
+  expect(button('Rename Alpha')).toBeDefined();
+  await act(async () => button('Rename Alpha').props.onPress({ stopPropagation: jest.fn() }));
+  await act(async () => titleInput().props.onChangeText('Discard me'));
+  const input = titleInput();
+  await act(async () => { input.props.onKeyPress({ nativeEvent: { key: 'Escape' } }); input.props.onBlur(); });
+  expect(storyLibrary.renameStory).not.toHaveBeenCalled();
+  expect(button('Alpha').props.disabled).toBe(false);
+});
+
+test('failed rename keeps input available to retry', async () => {
+  (storyLibrary.renameStory as jest.Mock).mockRejectedValueOnce(new Error('disk full'));
+  await act(async () => button('Rename Alpha').props.onPress({ stopPropagation: jest.fn() }));
+  await act(async () => titleInput().props.onChangeText('New title'));
+  await act(async () => titleInput().props.onBlur());
+  expect(titleInput().props.value).toBe('New title');
+  expect(button('Retry saving title')).toBeDefined();
+  expect(titleInput().props.editable).toBe(true);
+  (storyLibrary.renameStory as jest.Mock).mockResolvedValueOnce({ ...comic, title: 'New title' });
+  await act(async () => button('Retry saving title').props.onPress());
+  expect(button('Rename New title')).toBeDefined();
+});
+
+test('pressing library background saves the edited title', async () => {
+  (storyLibrary.renameStory as jest.Mock).mockResolvedValueOnce({ ...comic, title: 'New title' });
+  await act(async () => button('Rename Alpha').props.onPress({ stopPropagation: jest.fn() }));
+  await act(async () => titleInput().props.onChangeText('New title'));
+  await act(async () => {
+    const background = renderer.root.findByProps({ testID: 'library-background' });
+    background.props.onStartShouldSetResponderCapture({ nativeEvent: { pageX: 300, pageY: 400 } });
+    background.props.onTouchEnd();
+  });
+  expect(storyLibrary.renameStory).toHaveBeenCalledWith('alpha', 'New title');
+});
+
+
+test('dragging through empty grid space does not clear selection or open a comic', async () => {
+  await act(async () => button('Alpha').props.onPress());
+  const background = renderer.root.findByProps({ testID: 'library-background' });
+  await act(async () => {
+    background.props.onStartShouldSetResponderCapture({ nativeEvent: { pageX: 300, pageY: 500 } });
+    background.props.onTouchMove({ nativeEvent: { pageX: 300, pageY: 400 } });
+    background.props.onTouchMove({ nativeEvent: { pageX: 300, pageY: 500 } });
+    background.props.onTouchEnd();
+  });
+  expect(button('Alpha').props.accessibilityState.selected).toBe(true);
+  expect(onOpen).not.toHaveBeenCalled();
+  await act(async () => {
+    background.props.onStartShouldSetResponderCapture({ nativeEvent: { pageX: 300, pageY: 500 } });
+    renderer.root.findByType(FlatList).props.onScrollBeginDrag();
+    background.props.onTouchEnd();
+  });
+  expect(button('Alpha').props.accessibilityState.selected).toBe(true);
+});
+
+test('touches starting on a comic are not treated as background taps', async () => {
+  await act(async () => button('Alpha').props.onPress());
+  const background = renderer.root.findByProps({ testID: 'library-background' });
+  await act(async () => {
+    background.props.onStartShouldSetResponderCapture({ nativeEvent: { pageX: 30, pageY: 50 } });
+    button('Alpha').props.onPressIn();
+    background.props.onTouchEnd();
+  });
+  expect(button('Alpha').props.accessibilityState.selected).toBe(true);
 });
