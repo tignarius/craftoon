@@ -11,11 +11,12 @@ import { ComicPanel, PanelMode, TracingImage, PanelCorners, PanelBorderStyle, Pa
 import { TracingImageControls } from './TracingImageControls';
 import Svg, { Polygon } from 'react-native-svg';
 import { PanelSurface } from './PanelSurface';
+import { snapPanelAspectResize } from '../utils/panelAspectSnap';
 import { lockedArtworkGeometry } from '../utils/panelArtworkLock';
 import { PANEL_ICON_SCALE } from './panelIconSizing';
 import { PanelBorderIcon } from './PanelBorderIcon';
 import { PanelCornerHandle } from './PanelCornerHandle';
-import { snapPanelMove, snapPanelResize, PanelSnapGuide, ShapeUpdate } from '../utils/panelSnap';
+import { snapPanelMove, snapPanelResize, ShapeUpdate } from '../utils/panelSnap';
 import { panelCorners, panelControlLayout, panelHandleSide, panelsCollide, panelRenderedFrame } from '../utils/panelGeometry';
 import { Image as ImageIcon, Move, Pen, Trash2, ZoomIn, ZoomOut, LockKeyhole, LockKeyholeOpen } from 'lucide-react-native';
 import { PencilKitView } from '../../PencilKitView';
@@ -102,6 +103,8 @@ export const Panel: React.FC<PanelProps> = ({
   useEffect(() => { setReshaping(false); setBorderMenu(false); }, [mode]);
   const [shapePreview, setShapePreview] = useState<ShapeUpdate | null>(null);
   const [geometryPreview, setGeometryPreview] = useState<Partial<ComicPanel> | null>(null);
+  const [aspectSnapped, setAspectSnapped] = useState(false);
+  const aspectSnapRef = useRef(false);
   const [resizingSide, setResizingSide] = useState<'left' | 'right' | null>(null);
   useEffect(() => { setGeometryPreview(null); }, [storedPanel.x, storedPanel.y, storedPanel.width, storedPanel.height, storedPanel.corners, mode]);
   useEffect(() => { setShapePreview(null); }, [storedPanel.corners, mode]);
@@ -188,6 +191,7 @@ export const Panel: React.FC<PanelProps> = ({
     onGuidesChangeRef.current?.([]);
   };
   const finishResize = () => {
+    aspectSnapRef.current = false; setAspectSnapped(false);
     setResizingSide(null);
     const result = resizeResultRef.current;
     resizeResultRef.current = null;
@@ -286,6 +290,7 @@ export const Panel: React.FC<PanelProps> = ({
       onPanResponderTerminationRequest: () => false,
       onStartShouldSetPanResponder: () => modeRef.current === 'layout',
       onPanResponderGrant: () => {
+        aspectSnapRef.current = false; setAspectSnapped(false);
         resizeResultRef.current = null;
         resizeDraggedRef.current = false;
         resizeStartRef.current = panelRef.current;
@@ -295,20 +300,22 @@ export const Panel: React.FC<PanelProps> = ({
       onPanResponderMove: (_, g) => {
         if (modeRef.current !== 'layout') { return; }
         if (Math.abs(g.dx) >= 5 || Math.abs(g.dy) >= 5) { resizeDraggedRef.current = true; }
-        const guides: PanelSnapGuide[] = [];
-        const target = snapPanelResize(resizeStartRef.current, g.dx / scaleRef.current, g.dy / scaleRef.current,
-          resizeSideRef.current, otherPanelsRef.current, sheetBoundsRef.current, guides);
+        const result = snapPanelAspectResize(resizeStartRef.current, g.dx / scaleRef.current, g.dy / scaleRef.current,
+          resizeSideRef.current, otherPanelsRef.current, sheetBoundsRef.current, scaleRef.current, aspectSnapRef.current);
+        const { geometry: target, guides } = result;
         if (otherPanelsRef.current.some(other => !panelsCollide(panelRenderedFrame(resizeStartRef.current), panelRenderedFrame(other), 0)
           && panelsCollide(panelRenderedFrame({ ...resizeStartRef.current, ...target }), panelRenderedFrame(other), 0))) {
           onGuidesChangeRef.current?.([]);
           return;
         }
+        aspectSnapRef.current = result.aspectSnapped; setAspectSnapped(result.aspectSnapped);
         resizeResultRef.current = target;
         setGeometryPreview(target);
         onGuidesChangeRef.current?.(guides);
       },
       onPanResponderRelease: (_, g) => {
         if (!resizeDraggedRef.current && Math.abs(g.dx) < 5 && Math.abs(g.dy) < 5) {
+          aspectSnapRef.current = false; setAspectSnapped(false);
           resizeResultRef.current = null;
           setGeometryPreview(null);
           setResizingSide(null);
@@ -563,7 +570,8 @@ export const Panel: React.FC<PanelProps> = ({
       {/* 4. 리사이즈 핸들 */}
       {mode === 'layout' && !editingReference && !reshaping && (
         <View accessibilityRole="button" accessibilityLabel="Resize or reshape panel" onAccessibilityTap={toggleReshaping} accessibilityHint="Drag to resize. Tap to reshape this corner." style={[styles.resizeHandle, { bottom: undefined, right: undefined, left: panel.x + 2 + corners[handleIndex].x * (panel.width - 4) - 14, top: panel.y + 2 + corners[handleIndex].y * (panel.height - 4) - 14 }]} {...resizePR.panHandlers}>
-          <View style={styles.resizeKnob} />
+          <View testID={aspectSnapped ? 'panel-aspect-snap' : undefined}
+            style={[styles.resizeKnob, aspectSnapped && { backgroundColor: '#0D9488' }]} />
         </View>
       )}
       {mode === 'layout' && !editingReference && reshaping && <PanelCornerHandle

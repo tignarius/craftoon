@@ -73,3 +73,12 @@ yarn-error.log
 !.yarn/releases
 !.yarn/sdks
 !.yarn/versions
+
+# Local build products, previews and editor state
+/ios/build_test/
+/release/
+/output/
+/tmp/
+/.vscode/
+__pycache__/
+*.xcarchive/

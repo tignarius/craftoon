@@ -209,7 +209,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
           panelsRef.current, sheetBoundsRef.current);
         // Hold the last valid shape when the pointer enters occupied space.
         // Keep it until the pointer returns to a valid free-side position.
-        if (candidate && candidate.width > 50 && candidate.height > 50) {
+        if (candidate && candidate.width > 75 && candidate.height > 75) {
           creatingRef.current = candidate;
           setCreatingRect(candidate);
         } else {
@@ -220,7 +220,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({
       onPanResponderRelease: () => {
         const rect = creatingRef.current;
 
-        if (rect && rect.width > 50 && rect.height > 50) {
+        if (rect && rect.width > 75 && rect.height > 75) {
           // 기존 어떤 패널과도 겹치지 않는지 확인 후 생성
           const fitted = rect;
           const collides = panelsRef.current.some((p) => panelsCollide(fitted, p, PANEL_CLOSE_GAP));

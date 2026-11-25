@@ -938,3 +938,34 @@ test('the per-panel artwork lock is available only in Layout and survives switch
     expect(renderer.root.findByType(PencilKitView).props.shapeFrame.artworkLocked).toBe(true);
   } finally { if (renderer) { await act(async () => renderer.unmount()); } }
 });
+
+
+test('proportional resize shows a hint during preview and commits uniform ink scaling once on release', async () => {
+  const responder = jest.spyOn(PanResponder, 'create');
+  const onResize = jest.fn();
+  const subject = { id: 'ratio', x: 200, y: 200, width: 304, height: 204 };
+  let renderer!: ReactTestRenderer.ReactTestRenderer;
+  try {
+    await act(async () => { renderer = ReactTestRenderer.create(<Panel panel={subject} otherPanels={[]}
+      mode="layout" sheetBounds={{ width: 1600, height: 1400 }} onResize={onResize}
+      onSelect={jest.fn()} onModeChange={jest.fn()} onMove={jest.fn()} onDelete={jest.fn()} onDoubleTap={jest.fn()} />); });
+    const gesture = responder.mock.calls[1][0];
+    await act(async () => gesture.onPanResponderGrant!({} as never, {} as never));
+    await act(async () => gesture.onPanResponderMove!({} as never, { dx: 61, dy: 39 } as never));
+    expect(renderer.root.findAllByProps({ testID: 'panel-aspect-snap' }).length).toBeGreaterThan(0);
+    expect(onResize).not.toHaveBeenCalled();
+    await act(async () => gesture.onPanResponderMove!({} as never, { dx: 60, dy: 60 } as never));
+    expect(renderer.root.findAllByProps({ testID: 'panel-aspect-snap' })).toHaveLength(0);
+    await act(async () => gesture.onPanResponderMove!({} as never, { dx: 61, dy: 39 } as never));
+    expect(onResize).not.toHaveBeenCalled();
+    await act(async () => gesture.onPanResponderRelease!({} as never, { dx: 61, dy: 39 } as never));
+    expect(onResize).toHaveBeenCalledTimes(1);
+    const update = onResize.mock.calls[0][1];
+    expect((update.width - 4) / 300).toBeCloseTo((update.height - 4) / 200, 10);
+    expect(update.resizeInk).toBe(true);
+    expect(renderer.root.findAllByProps({ testID: 'panel-aspect-snap' })).toHaveLength(0);
+  } finally {
+    if (renderer) await act(async () => renderer.unmount());
+    responder.mockRestore();
+  }
+});
