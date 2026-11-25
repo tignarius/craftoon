@@ -1,0 +1,39 @@
+CRAFTOON SUPPORT WEBSITE
+
+Contact email: craftoon.support@gmail.com
+Website source: docs/support/index.html, styles.css, and images/
+Selected design: pastel support page; footer © 2025–2026 SquarePlayer.
+The original design has been replaced by the selected latest design.
+Deployment workflow: .github/workflows/support-pages.yml
+
+This is a static English support page. It has no JavaScript, analytics, external
+fonts, contact form, or app build step. Email links open the visitor's email app.
+Only docs/support is uploaded by the workflow; other repository documents,
+source code, screenshots, and copyright research are not included in the Pages artifact.
+GitHub may impose repository visibility/plan requirements for Pages.
+
+PUBLICATION
+1. Commit and push docs/support (including its images) and support-pages.yml to the existing
+   tignarius/craftoon GitHub repository. Include this guide if useful.
+   Do not include unrelated pending app changes or build artifacts.
+2. In GitHub: repository Settings > Pages > Build and deployment > Source,
+   select GitHub Actions. If Pages already serves another website, do not
+   replace it; choose a separate repository or integrate the support page first.
+3. In Actions, select Publish Craftoon Support, then Run workflow on the branch
+   containing these files. It runs only when manually triggered.
+4. Wait for a successful deployment. Use the exact URL displayed by the job.
+5. Open the deployed page without signing in and test the email links.
+
+Expected project URL for the current remote, subject to Pages/domain settings:
+https://tignarius.github.io/craftoon/
+This address has NOT been verified as live. Do not enter it in App Store Connect
+until the deployment succeeds and the public page is accessible.
+
+APP STORE CONNECT
+Support URL: the verified live support-page URL.
+Marketing URL: optional; may remain empty.
+Privacy Policy URL: still needs a separate, accurate public privacy policy.
+This support page is not a privacy policy.
+
+No app version, bundle identifier, app configuration, Archive or upload changes
+are required to publish these static files.
