@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet,
+import { ActivityIndicator, AppState, Linking, Modal, Pressable, SafeAreaView, ScrollView, StyleSheet,
   TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { Check, Glasses, LibraryBig, Sparkles, SquarePen, X } from 'lucide-react-native';
 import { AppText as Text } from '../components/AppText';
@@ -85,6 +85,11 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
       if (mounted.current) { setMessage(error instanceof Error ? error.message : 'Could not open the quick guide. Please try again.'); }
     } finally { busyRef.current = false; if (mounted.current) { setBusy(false); } }
   };
+  const openPrivacy = async () => {
+    if (busyRef.current) { return; }
+    try { await Linking.openURL('https://tignarius.github.io/craftoon/privacy.html'); }
+    catch { setMessage('Could not open the privacy policy. Please check your internet connection and try again.'); }
+  };
   const openInfo = (mode: AppMode, anchor?: InfoAnchor, pages?: number) => {
     setMessage(''); setPanel({ mode, anchor, pages });
   };
@@ -98,15 +103,15 @@ export function ProProvider({ children }: { children: React.ReactNode }) {
     <InfoPanel panel={panel} status={status} busy={busy} checking={checking} message={message}
       onClose={() => { if (!busyRef.current) { setPanel(null); } }} onRetry={refresh}
       onPurchase={() => transact('purchase')} onRestore={() => transact('restore')}
-      onRedeem={() => transact('redeem')} onManual={showManual} />
+      onRedeem={() => transact('redeem')} onManual={showManual} onPrivacy={openPrivacy} />
   </ProContext.Provider>;
 }
 
-function InfoPanel({ panel, status, busy, checking, message, onClose, onRetry, onPurchase, onRestore, onRedeem, onManual }: {
+function InfoPanel({ panel, status, busy, checking, message, onClose, onRetry, onPurchase, onRestore, onRedeem, onManual, onPrivacy }: {
   panel: { mode: AppMode; anchor?: InfoAnchor; feature?: ProFeature; pages?: number } | null;
   status: ProStatus; busy: boolean; checking: boolean; message: string;
   onClose: () => void; onRetry: () => void; onPurchase: () => void; onRestore: () => void;
-  onRedeem: () => void; onManual: () => void;
+  onRedeem: () => void; onManual: () => void; onPrivacy: () => void;
 }) {
   const { width, height } = useWindowDimensions();
   if (!panel) { return null; }
@@ -168,6 +173,11 @@ function InfoPanel({ panel, status, busy, checking, message, onClose, onRetry, o
             accessibilityHint="Open Apple's secure code entry screen"
             accessibilityState={{ disabled, busy }} disabled={disabled} onPress={onRedeem} style={styles.menuRow}>
             <Text style={styles.link}>Enter activation code</Text>
+          </TouchableOpacity>
+          <TouchableOpacity accessibilityRole="link" accessibilityLabel="Open privacy policy"
+            accessibilityHint="Opens the privacy policy in your browser"
+            disabled={busy} onPress={onPrivacy} style={styles.menuRow}>
+            <Text style={styles.link}>Privacy Policy</Text>
           </TouchableOpacity>
           {!!message && <Text accessibilityRole="alert" style={styles.message}>{message}</Text>}
           <View style={styles.about}>

@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactTestRenderer, { act } from 'react-test-renderer';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Linking, Text, TouchableOpacity, View } from 'react-native';
 import { ProProvider, usePro } from '../src/access/ProProvider';
 import { ModeInfoButton } from '../src/components/ModeInfoButton';
 import { proAccess } from '../src/services/proAccess';
@@ -24,12 +24,13 @@ const button = (label: string) => renderer.root.findAllByType(TouchableOpacity).
 const access = () => renderer.root.findByProps({ testID: 'access' }).props.children;
 beforeEach(async () => {
   jest.clearAllMocks();
+  jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
   (proAccess.getStatus as jest.Mock).mockResolvedValue(free);
   (proAccess.purchase as jest.Mock).mockResolvedValue({ ...free, outcome: 'cancelled' });
   (proAccess.restore as jest.Mock).mockResolvedValue({ ...free, outcome: 'restored' });
   await act(async () => { renderer = ReactTestRenderer.create(<ProProvider><Probe /></ProProvider>); });
 });
-afterEach(async () => { await act(async () => renderer.unmount()); });
+afterEach(async () => { await act(async () => renderer.unmount()); jest.restoreAllMocks(); });
 
 test('redemption only unlocks Pro after a verified entitlement, including later updates', async () => {
   (proAccess.redeem as jest.Mock).mockResolvedValueOnce({ ...free, outcome: 'redeemed' });
@@ -138,4 +139,23 @@ test('a delayed purchase result cannot overwrite a newer entitlement update', as
   await act(async () => listener({ ...free, isPro: true }));
   await act(async () => { finish({ ...free, outcome: 'pending' }); await pending; });
   expect(access()).toBe('pro');
+});
+
+
+test('the privacy policy opens the public website without requiring Pro or a purchase', async () => {
+  await act(async () => button('Attempt save').props.onPress());
+  expect(button('Open privacy policy').props.accessibilityRole).toBe('link');
+  await act(async () => button('Open privacy policy').props.onPress());
+  expect(Linking.openURL).toHaveBeenCalledWith('https://tignarius.github.io/craftoon/privacy.html');
+  expect(proAccess.purchase).not.toHaveBeenCalled();
+  expect(access()).toBe('free');
+});
+
+test('privacy link failures display a retry message and preserve access', async () => {
+  (Linking.openURL as jest.Mock).mockRejectedValueOnce(new Error('Cannot open browser'));
+  await act(async () => button('Attempt save').props.onPress());
+  await act(async () => button('Open privacy policy').props.onPress());
+  expect(renderer.root.findAllByType(Text).some(item => item.props.children ===
+    'Could not open the privacy policy. Please check your internet connection and try again.')).toBe(true);
+  expect(access()).toBe('free');
 });
