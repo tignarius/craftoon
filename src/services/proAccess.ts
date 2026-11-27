@@ -7,6 +7,7 @@ export interface ProStatus {
   productId: string;
   appVersion: string;
   developerName: string;
+  purchaseIssue?: string;
 }
 export interface PurchaseResult extends ProStatus {
   outcome: 'purchased' | 'cancelled' | 'pending' | 'restored' | 'redeemed';

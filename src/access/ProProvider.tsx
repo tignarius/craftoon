@@ -165,6 +165,8 @@ function InfoPanel({ panel, status, busy, checking, message, onClose, onRetry, o
                 <TouchableOpacity accessibilityRole="button" accessibilityLabel="Refresh purchases"
                   disabled={busy} onPress={onRetry} style={styles.smallButton}><Text style={styles.smallLink}>Retry</Text></TouchableOpacity>
               </View>}
+              {!checking && !status.canPurchase && !!status.purchaseIssue &&
+                <Text style={styles.detailLabel}>{status.purchaseIssue}</Text>}
             </>}
             <TouchableOpacity accessibilityRole="button" accessibilityLabel="Restore purchases" disabled={disabled}
               onPress={onRestore} style={styles.restore}><Text style={styles.smallLink}>Restore purchases</Text></TouchableOpacity>

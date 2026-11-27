@@ -62,3 +62,10 @@ upload, or App Store Connect submission is part of this fix's validation.
 These checks do not claim Archive packaging or App Store Connect symbol-upload
 acceptance. Those can be confirmed only when the owner explicitly proceeds with
 Archive and distribution.
+
+## Build 2 authorization (2026-11-27)
+
+The owner has now authorized preparing version 1.0 (2), Archive and upload. The
+Build 1 validation record above is historical and remains intact. Archive-specific
+checks are recorded separately when completed; final App Review submission is not
+authorized. See `docs/app-store/SUBMISSION_STATUS.md`.

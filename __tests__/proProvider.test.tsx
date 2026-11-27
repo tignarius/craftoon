@@ -32,6 +32,19 @@ beforeEach(async () => {
 });
 afterEach(async () => { await act(async () => renderer.unmount()); jest.restoreAllMocks(); });
 
+test('failed lookup explains the issue and Retry can recover without unlocking Pro', async () => {
+  const listener = (proAccess.subscribe as jest.Mock).mock.calls[0][0];
+  const purchaseIssue = 'The App Store did not return Craftoon Pro. Please try again later.';
+  await act(async () => listener({ ...free, canPurchase: false, displayPrice: '', purchaseIssue }));
+  await act(async () => button('Attempt save').props.onPress());
+  expect(renderer.root.findAllByType(Text).some(item => item.props.children === purchaseIssue)).toBe(true);
+  expect(button('Buy Craftoon Pro').props.disabled).toBe(true);
+  await act(async () => button('Refresh purchases').props.onPress());
+  expect(button('Buy Craftoon Pro').props.disabled).toBe(false);
+  expect(renderer.root.findAllByType(Text).some(item => item.props.children === purchaseIssue)).toBe(false);
+  expect(access()).toBe('free');
+});
+
 test('redemption only unlocks Pro after a verified entitlement, including later updates', async () => {
   (proAccess.redeem as jest.Mock).mockResolvedValueOnce({ ...free, outcome: 'redeemed' });
   await act(async () => button('Attempt save').props.onPress());

@@ -58,10 +58,35 @@ actor CraftoonPurchaseStore {
 
   func status() async -> [String: Any] {
     let enabled = await hasProAccess()
-    let available = try? await loadProduct()
+    var available: Product?
+    var purchaseIssue = ""
+    var diagnostic = ""
+    do {
+      available = try await loadProduct()
+      if !SKPaymentQueue.canMakePayments() {
+        purchaseIssue = "In-app purchases are restricted on this iPad. Check Screen Time settings."
+      }
+    } catch {
+      let failure = error as NSError
+      diagnostic = "\(failure.domain) (\(failure.code)): \(failure.localizedDescription)"
+      if failure.domain == "CraftoonPro" {
+        purchaseIssue = "The App Store did not return Craftoon Pro. Please try again later."
+      } else {
+        purchaseIssue = "Could not connect to the App Store. \(failure.localizedDescription)"
+      }
+    }
+    // Keep only the latest lookup result, never receipts or account identifiers.
+    let lookup: [String: Any] = ["date": ISO8601DateFormatter().string(from: Date()),
+      "productId": productID, "productFound": available != nil,
+      "paymentsAllowed": SKPaymentQueue.canMakePayments(), "error": diagnostic]
+    if let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+       let data = try? JSONSerialization.data(withJSONObject: lookup, options: .prettyPrinted) {
+      try? data.write(to: directory.appendingPathComponent("craftoon-store-lookup.json"), options: .atomic)
+    }
     return ["isPro": enabled,
       "canPurchase": available != nil && SKPaymentQueue.canMakePayments(),
       "displayPrice": available?.displayPrice ?? "", "productId": productID,
+      "purchaseIssue": purchaseIssue,
       "appVersion": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
       "developerName": Bundle.main.object(forInfoDictionaryKey: "CraftoonDeveloperName") as? String ?? ""]
   }

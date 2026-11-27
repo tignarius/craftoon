@@ -1,5 +1,7 @@
 # App Store English copy
 
+For the current release and verified purchase state, see [SUBMISSION_STATUS.md](SUBMISSION_STATUS.md). The November 20 checkpoint below is historical and predates the owner’s App Store Connect setup and Sandbox verification.
+
 Reviewed 2026-11-20 against development checkpoint `7312da23`: automatic layout, artwork lock, live reshape preview, Library drag order, email presentation and the latest shared Quick Guide. English text under `en-US/` is a draft for App Store Connect, not a live listing. No app record, upload, review submission or publication has been performed in this work.
 
 `whats-new.txt` is for an update to an existing release; omit it for an initial App Store version. Free includes up to four pages. Free allows one saved comic. Pro is a non-consumable purchase for unlimited saved comics and pages, PDF email, and printing. No price is hardcoded.

@@ -1,44 +1,51 @@
 # Craftoon App Store preparation
 
-Reviewed 2026-11-20 against development application checkpoint `7312da23`.
+Updated 2026-11-27 (America/Vancouver).
 
-## Current state
+## Current release identity
 
-The latest owner-provided account status is that paid Apple Developer Program enrollment has not been completed; no subsequent enrollment confirmation has been supplied. No App Store Connect app record, distribution upload, review submission or public release has been performed in this work.
+- Bundle identifier: `com.squareplayer.craftoon` (unchanged).
+- App version: **1.0** (unchanged); iOS build number: **2**.
+- Minimum deployment target: 15.1; iPad-only device family.
+- Non-consumable Pro product: `com.craftoon.pro.unlock`, App Store Connect ID `6839401070`.
+- Build 1 was previously uploaded by the owner for TestFlight. That archive remains unchanged.
 
-The project uses bundle identifier `com.squareplayer.craftoon`, app version **1.0**, build **1**, minimum deployment target **15.1** and iPad-only device family. These are source settings, not proof of App Store acceptance or testing on every supported OS version.
+## Purchase verification
 
-The latest Release build succeeded and was installed and launched on both the **iPad 7th generation** and the device named **iPad 10 (iPad A16)** without deleting their app data. Both installs include the latest one-page English Quick Guide. The owner confirmed that reshaped artwork remains visible and that the native Mail composition window opens on the older iPad. That confirmation does not establish actual email delivery or every interaction on both devices.
+The owner confirmed on the iPad 7th generation that the real Apple sandbox displayed CAD 4.99, completed a one-time purchase, unlocked Pro, retained Pro after relaunch, and restored without error. These are physical-device owner confirmations, not production purchase tests.
 
-The complete JavaScript suite passed **340 tests**; TypeScript passed. Separate targeted native runs passed **44 panel/ink tests**, **2 Mail-presentation tests** and **2 Library-order tests**. No full native/StoreKit rerun or latest-session physical-device performance benchmark is claimed.
+Before availability recovered, the device reported payments allowed but no product returned by StoreKit. The product ID, price, localization, signing team, explicit App ID and enabled In-App Purchase capability were checked. Paid Apps Agreement, banking and tax forms were Active. Availability recovered after account/configuration work and a later retry; the exact server-side cause or timing cannot be established from the recorded evidence.
 
-The English listing drafts now describe reshaping, four borders, focused zoom, per-panel references, Auto arrange, artwork lock and long-press Library order. Free includes four pages per comic and one saved comic; Pro unlocks unlimited pages/comics, PDF email and print. The final accepted guide shows the page menu's real triangles/minus/plus, with one counter, a short purple connector and an adjacent insertion/deletion caption. The Library drag feature has not been added to its existing cover illustration.
+The app now distinguishes a missing product, a StoreKit lookup error and device payment restrictions. Retry reissues an unsuccessful product lookup. The latest lookup result is stored only in the app's local Caches directory for diagnostics; no receipts/account identifiers are intentionally recorded or transmitted. No local entitlement override was added: verified StoreKit transactions remain the authority for Pro access.
 
-Application checkpoint `7312da23` was verified on GitHub `origin/main`. This documentation refresh is a later local change until its own commit/push is verified. Pre-refresh files remain available through Git history and tag `backup/docs-before-refresh-20261120`.
+Not newly confirmed in this physical-device session: cancellation, refund/revocation and offer-code redemption. Prior native tests are historical evidence, not a claim of a new full native run.
 
-## Remaining release work
+## Store materials and settings
 
-1. Complete Developer Program enrollment and confirm the intended individual/organization seller identity. Verify current requirements and local membership pricing in Apple's enrollment flow.
-2. Select the enrolled signing team, register/verify `com.squareplayer.craftoon` and create the App Store Connect app record. Check existing uploads before assigning the release build number.
-3. Configure non-consumable `com.craftoon.pro.unlock`, availability and localized price, and complete the required agreements, banking and tax settings. CAD 4.99 is the intended/test price, not a confirmed live price.
-4. Verify sandbox purchase, restoration, cancellation, revocation and offer-code redemption. No production activation codes have been issued in this work.
-5. Complete real support/privacy URLs, copyright, review contact, age rating, category, availability and App Privacy declarations. The manifest's declarations do not replace reviewing the shipping build's actual behavior.
-6. Produce and inspect current real-app App Store screenshots. Historical capture-session metadata is not a current approved release screenshot set; confirm Apple's current display requirements at submission time.
-7. Archive with distribution signing, validate/upload, attach the first Pro purchase as required and submit for review. No public release or automatic release setting has been authorized here.
+- Support: https://tignarius.github.io/craftoon/
+- Privacy: https://tignarius.github.io/craftoon/privacy.html
+- Final 9 marketing screenshots: `screencapture/app-store/ipad-13-en-CA-v3/`.
+- Purchase review screenshot: `screencapture/app-store/iap-review/craftoon-pro-review-ipad-1536x2048.jpg` (1536 × 2048, 72 dpi, opaque JPEG). Original `IMG_0598.PNG` is unchanged.
+- App download is intended to be free; Pro is a one-time CAD 4.99 purchase.
+- Owner confirmed the pricing/availability checks after being advised to exclude China mainland, disable untested Mac/Vision Pro availability, and keep Public distribution. Not every final toggle was independently re-read.
+- App Privacy and policy link were completed by the owner. DSA was last observed In Review; Part XX was Active.
+- Promotional IAP image and offer codes are optional and not configured in this work.
 
-## Remaining hands-on checks
+## Build 2 preparation checks
 
-- On both physical iPads, verify long-press reorder, edge scrolling and persistence after reopening Library, including deletion/Undo after a reorder.
-- Recheck direction-picker rotation, page orientation lock, empty-template save prompts, artwork lock and reshape, focused zoom and tracing-image controls.
-- Verify Mail cancellation and repeated opening, actual PDF attachment/delivery, printing to an available AirPrint printer, and opening/rotating/pinching the bundled guide.
-- Exercise Free's four-page/one-comic limits and the paid access transitions without deleting existing work.
+- Complete JavaScript suite: **19 suites / 366 tests passed**.
+- TypeScript `tsc --noEmit`: passed.
+- Source Info.plist and Xcode project plist validation: passed.
+- Hermes copy script shell syntax: passed.
+- `git diff --check`: passed before the release version update; repeat before commit.
+- App source sets `ITSAppUsesNonExemptEncryption` to false.
 
-These are release checks still requiring confirmation; earlier partial device confirmations must not be presented as completion of the whole checklist.
+Archive creation, archived Hermes/app dSYM UUID verification, distribution validation/upload and App Store Connect processing must be checked separately. This document does not claim completion of those operations before their results are available.
 
-## Official references
+## Authorization and remaining handoff
 
-- [Developer Program enrollment](https://developer.apple.com/programs/enroll/)
-- [Submit an app](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-app/)
-- [Submit an In-App Purchase](https://developer.apple.com/help/app-store-connect/manage-submissions-to-app-review/submit-an-in-app-purchase/)
-- [Screenshot specifications](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications/)
-- [Create In-App Purchase offer codes](https://developer.apple.com/help/app-store-connect/manage-in-app-purchases/create-offer-codes-for-in-app-purchases/)
+On 2026-11-27 the owner authorized commit/push, Build 2, final validation, Archive/upload and attaching Craftoon Pro to the app version. Final App Review submission and public release are not authorized by this handoff.
+
+After upload processing, select **1.0 (2)** on the app version, attach the first Craftoon Pro purchase, verify its review screenshot/notes are saved, and inspect remaining validation messages. Do not click the final submission action without owner approval.
+
+Historical preparation checkpoints and detailed older device/native checks remain available in Git history. Device artwork backups remain local under ignored `release/device-backups/`; they must not be committed or uploaded.
