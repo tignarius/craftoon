@@ -40,12 +40,12 @@ Not newly confirmed in this physical-device session: cancellation, refund/revoca
 - `git diff --check`: passed before the release version update; repeat before commit.
 - App source sets `ITSAppUsesNonExemptEncryption` to false.
 
-Build 2 Archive, actual archived app/Hermes UUID matching, Hermes DWARF and app signature validation, and App Store Connect upload succeeded. Xcode Organizer shows 1.0 (2) Uploaded to Apple. App Store Connect processing was still in progress at the first check. See [BUILD_2_VALIDATION.md](BUILD_2_VALIDATION.md) for exact evidence. Processing and review approval are separate from upload success.
+Build 2 Archive, actual archived app/Hermes UUID matching, Hermes DWARF and app signature validation, and App Store Connect upload succeeded. Xcode Organizer shows 1.0 (2) Uploaded to Apple. App Store Connect processing completed, and Build 2 was selected and saved on version 1.0. See [BUILD_2_VALIDATION.md](BUILD_2_VALIDATION.md) for exact evidence. Processing and review approval are separate from upload success.
 
 ## Authorization and remaining handoff
 
 On 2026-11-27 the owner authorized commit/push, Build 2, final validation, Archive/upload and attaching Craftoon Pro to the app version. Final App Review submission and public release are not authorized by this handoff.
 
-After upload processing, select **1.0 (2)** on the app version, attach the first Craftoon Pro purchase, verify its review screenshot/notes are saved, and inspect remaining validation messages. Do not click the final submission action without owner approval.
+The iOS draft now contains **iOS App 1.0 — 1.0 (2)** and **Craftoon Pro** together, with **Items Ready to Submit (2)** and **Submit for Review** enabled. The product screenshot and notes are saved. Manual release remains selected. **Final submission and public release have not been performed.** The only remaining action in this flow is owner approval for the final submission.
 
 Historical preparation checkpoints and detailed older device/native checks remain available in Git history. Device artwork backups remain local under ignored `release/device-backups/`; they must not be committed or uploaded.

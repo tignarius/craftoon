@@ -27,9 +27,9 @@ The existing official RN/Hermes 0.82.1 Release symbol fix was used without chang
 
 Export/upload used Xcode automatic signing, `method=app-store-connect`, `destination=upload`, `uploadSymbols=true`, `manageAppVersionAndBuildNumber=false`, and `testFlightInternalTestingOnly=false`.
 
-Xcode reported **Upload succeeded** and **EXPORT SUCCEEDED**. No symbol-upload warning or other warning/error was present in the export/upload log. Organizer displays **1.0 (2), Uploaded to Apple**, and App Store Connect displays **Version 1.0, Build (2), Processing**. Upload success is distinct from completed server processing or review approval.
+Xcode reported **Upload succeeded** and **EXPORT SUCCEEDED**. No symbol-upload warning or other warning/error was present in the export/upload log. Organizer displays **1.0 (2), Uploaded to Apple**. App Store Connect subsequently completed processing and displayed **Build 2 — Ready to Submit**. No review approval is implied.
 
 Local archive: `release/Craftoon-1.0-build2.xcarchive` (ignored, not committed).
 Local validation logs: `/tmp/craftoon-build2-tests.log`, `/tmp/craftoon-build2-archive.log`, `/tmp/craftoon-build2-dsym-verify.log`, `/tmp/craftoon-build2-upload.log`.
 
-Craftoon Pro's real purchase review screenshot and review notes were independently observed saved in App Store Connect. The product has been added to an iOS draft submission and is **Ready for Review**. The app version must join that same draft after Build 2 processing. **Submit for Review has not been clicked.**
+Craftoon Pro's real purchase review screenshot and review notes were independently observed saved in App Store Connect. Build **1.0 (2)** was selected and saved on iOS App Version 1.0. The app version was added to the existing Craftoon Pro draft. App Store Connect now shows **Items Ready to Submit (2)** containing **iOS App 1.0 — 1.0 (2)** and **Craftoon Pro**, with **Submit for Review** enabled. The app and IAP are **Ready for Review**. **Submit for Review has not been clicked.** Manual release remains selected.
