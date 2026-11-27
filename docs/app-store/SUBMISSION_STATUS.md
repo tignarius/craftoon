@@ -40,7 +40,7 @@ Not newly confirmed in this physical-device session: cancellation, refund/revoca
 - `git diff --check`: passed before the release version update; repeat before commit.
 - App source sets `ITSAppUsesNonExemptEncryption` to false.
 
-Archive creation, archived Hermes/app dSYM UUID verification, distribution validation/upload and App Store Connect processing must be checked separately. This document does not claim completion of those operations before their results are available.
+Build 2 Archive, actual archived app/Hermes UUID matching, Hermes DWARF and app signature validation, and App Store Connect upload succeeded. Xcode Organizer shows 1.0 (2) Uploaded to Apple. App Store Connect processing was still in progress at the first check. See [BUILD_2_VALIDATION.md](BUILD_2_VALIDATION.md) for exact evidence. Processing and review approval are separate from upload success.
 
 ## Authorization and remaining handoff
 
